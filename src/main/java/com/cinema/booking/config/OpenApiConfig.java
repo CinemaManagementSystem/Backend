@@ -33,8 +33,7 @@ public class OpenApiConfig {
             Map.entry("order-controller", "Orders"),
             Map.entry("order-item-controller", "Order Items"),
             Map.entry("payment-controller", "Payments"),
-            Map.entry("wallet-controller", "Wallets"),
-            Map.entry("wallet-transaction-controller", "Wallet Transactions"),
+            Map.entry("payment-transaction-controller", "Payment Transactions"),
             Map.entry("user-controller", "User Management")
     );
 
@@ -61,8 +60,7 @@ public class OpenApiConfig {
                         new Tag().name("Orders").description("Endpoints for managing Orders"),
                         new Tag().name("Order Items").description("Endpoints for managing Order Items"),
                         new Tag().name("Payments").description("Endpoints for managing Payments"),
-                        new Tag().name("Wallets").description("Endpoints for managing Wallets"),
-                        new Tag().name("Wallet Transactions").description("Endpoints for managing Wallet Transactions"),
+                        new Tag().name("Payment Transactions").description("Endpoints for managing Payment Transactions"),
                         new Tag().name("User Management").description("Endpoints for User Administration")
                 ))
                 .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME_NAME))

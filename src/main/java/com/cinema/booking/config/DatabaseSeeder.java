@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,7 +23,6 @@ import java.util.List;
 public class DatabaseSeeder implements CommandLineRunner {
 
     private final UserRepository userRepository;
-    private final WalletRepository walletRepository;
     private final LocationRepository locationRepository;
     private final TheaterRepository theaterRepository;
     private final ScreenRepository screenRepository;
@@ -45,12 +44,7 @@ public class DatabaseSeeder implements CommandLineRunner {
         User staff = seedUserIfNotExists("staff", "staff@cinema.com", "Staff Member", "Staff123", Role.STAFF);
         User customer = seedUserIfNotExists("user", "user@cinema.com", "Regular Customer", "User123", Role.USER);
 
-        // 2. Wallets (for Users)
-        seedWalletIfNotExists(admin, BigDecimal.valueOf(500.00), "USD");
-        seedWalletIfNotExists(staff, BigDecimal.valueOf(200.00), "USD");
-        seedWalletIfNotExists(customer, BigDecimal.valueOf(100.00), "USD");
-
-        // 3. Locations
+        // 2. Locations
         Location phnomPenh = seedLocationIfNotExists(
                 "Phnom Penh Central",
                 "#123 St 214, Daun Penh, Phnom Penh",
@@ -212,16 +206,6 @@ public class DatabaseSeeder implements CommandLineRunner {
         });
     }
 
-    private void seedWalletIfNotExists(User user, BigDecimal initialBalance, String currency) {
-        if (!walletRepository.existsByUser(user)) {
-            Wallet wallet = new Wallet();
-            wallet.setUser(user);
-            wallet.setBalance(initialBalance);
-            wallet.setCurrency(currency);
-            walletRepository.save(wallet);
-            log.info("Default wallet created for user '{}' with balance {} {}", user.getUsername(), initialBalance, currency);
-        }
-    }
 
     private Location seedLocationIfNotExists(String name, String address, String city, String mapsUrl, BigDecimal lat, BigDecimal lng) {
         return locationRepository.findByName(name).orElseGet(() -> {

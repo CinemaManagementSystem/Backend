@@ -11,12 +11,8 @@ public class PaymentMapper {
     public Payment toEntity(PaymentRequestDto dto) {
         Payment payment = new Payment();
         payment.setAmount(dto.getAmount());
-        payment.setPaidAt(dto.getPaidAt());
         payment.setPaymentMethod(dto.getPaymentMethod());
-        payment.setStatus(dto.getStatus());
-        payment.setTransactionId(dto.getTransactionId());
-        // TODO: FK fields (booking, customer, order) are resolved in the Service layer
-        // using their respective repositories, then set on payment before saving.
+        // Status, paidAt, transactionId, khqrString, md5Hash, expiresAt are populated in Service layer
         return payment;
     }
 
@@ -28,6 +24,9 @@ public class PaymentMapper {
         dto.setPaymentMethod(payment.getPaymentMethod());
         dto.setStatus(payment.getStatus());
         dto.setTransactionId(payment.getTransactionId());
+        dto.setKhqrString(payment.getKhqrString());
+        dto.setMd5Hash(payment.getMd5Hash());
+        dto.setExpiresAt(payment.getExpiresAt());
         dto.setBookingId(payment.getBooking() != null ? payment.getBooking().getId() : null);
         dto.setCustomerId(payment.getCustomer() != null ? payment.getCustomer().getId() : null);
         dto.setOrderId(payment.getOrder() != null ? payment.getOrder().getId() : null);

@@ -156,28 +156,26 @@ Complete REST API endpoint documentation for the Cinema Booking System, reflecti
 
 | Method | Endpoint | Description | Access |
 |---|---|---|---|
-| `GET` | `/api/payments` | List payments | Authenticated |
+| `GET` | `/api/payments` | List all payments | Authenticated |
 | `GET` | `/api/payments/{id}` | Get payment by ID | Authenticated |
-| `POST` | `/api/payments` | Process a payment | Authenticated |
-| `PUT` | `/api/payments/{id}` | Update payment record | Authenticated |
-| `DELETE` | `/api/payments/{id}` | Delete payment record | Authenticated |
+| `POST` | `/api/payments` | Create a payment (`paymentMethod`: `CASH` or `KHQR`) | Authenticated |
+| `POST` | `/api/payments/{id}/confirm` | Confirm payment (Staff/Cash confirmation & activates booking) | Staff / Admin |
+| `GET` | `/api/payments/{id}/status` | Check/poll payment status (for KHQR polling) | Authenticated |
+| `PUT` | `/api/payments/{id}` | Update payment record | Staff / Admin |
+| `DELETE` | `/api/payments/{id}` | Delete payment record | Admin |
 
 ---
 
-## 13. Wallets & Transactions (`/api/wallets`, `/api/wallet-transactions`)
+## 13. Payment Transactions (`/api/payment-transactions`)
 
 | Method | Endpoint | Description | Access |
 |---|---|---|---|
-| `GET` | `/api/wallets` | List customer wallets | Authenticated |
-| `GET` | `/api/wallets/{id}` | Get wallet by ID | Authenticated |
-| `POST` | `/api/wallets` | Create a new wallet | Authenticated |
-| `PUT` | `/api/wallets/{id}` | Update wallet | Authenticated |
-| `DELETE` | `/api/wallets/{id}` | Delete wallet | Authenticated |
-| `GET` | `/api/wallet-transactions` | List wallet transactions | Authenticated |
-| `GET` | `/api/wallet-transactions/{id}` | Get wallet transaction by ID | Authenticated |
-| `POST` | `/api/wallet-transactions` | Add wallet transaction | Authenticated |
-| `PUT` | `/api/wallet-transactions/{id}` | Update transaction | Authenticated |
-| `DELETE` | `/api/wallet-transactions/{id}` | Delete transaction | Authenticated |
+| `GET` | `/api/payment-transactions` | List all payment transaction logs | Authenticated |
+| `GET` | `/api/payment-transactions/{id}` | Get payment transaction by ID | Authenticated |
+| `GET` | `/api/payment-transactions/by-payment/{paymentId}` | Get all transaction attempts for a specific payment | Authenticated |
+| `POST` | `/api/payment-transactions` | Create payment transaction | Authenticated |
+| `PUT` | `/api/payment-transactions/{id}` | Update payment transaction | Staff / Admin |
+| `DELETE` | `/api/payment-transactions/{id}` | Delete transaction record | Admin |
 
 ---
 

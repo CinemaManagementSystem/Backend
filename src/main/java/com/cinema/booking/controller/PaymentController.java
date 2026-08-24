@@ -22,6 +22,16 @@ public class PaymentController {
         return new ResponseEntity<>(paymentService.create(dto), HttpStatus.CREATED);
     }
 
+    @PostMapping("/{id}/confirm")
+    public ResponseEntity<PaymentResponseDto> confirmPayment(@PathVariable Long id) {
+        return ResponseEntity.ok(paymentService.confirmPayment(id));
+    }
+
+    @GetMapping("/{id}/status")
+    public ResponseEntity<PaymentResponseDto> checkStatus(@PathVariable Long id) {
+        return ResponseEntity.ok(paymentService.checkStatus(id));
+    }
+
     @PutMapping("/{id}")
     public ResponseEntity<PaymentResponseDto> update(@PathVariable Long id, @Valid @RequestBody PaymentRequestDto dto) {
         return ResponseEntity.ok(paymentService.update(id, dto));
