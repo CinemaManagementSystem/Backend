@@ -23,6 +23,7 @@ public class PaymentController {
     }
 
     @PostMapping("/{id}/confirm")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'STAFF')")
     public ResponseEntity<PaymentResponseDto> confirmPayment(@PathVariable Long id) {
         return ResponseEntity.ok(paymentService.confirmPayment(id));
     }
