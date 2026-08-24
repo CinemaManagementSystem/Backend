@@ -12,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -39,8 +38,6 @@ public class UserServiceImpl implements UserService {
         if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
             user.setPassword(passwordEncoder.encode(dto.getPassword()));
         }
-        user.setCreatedAt(LocalDateTime.now());
-        user.setUpdatedAt(LocalDateTime.now());
 
         user = userRepository.save(user);
         return userMapper.toResponseDto(user);
@@ -54,7 +51,6 @@ public class UserServiceImpl implements UserService {
         User updated = userMapper.toEntity(dto);
         updated.setId(existing.getId());
         updated.setCreatedAt(existing.getCreatedAt());
-        updated.setUpdatedAt(LocalDateTime.now());
 
         if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
             if (!dto.getPassword().startsWith("$2a$") && !dto.getPassword().startsWith("$2b$")) {

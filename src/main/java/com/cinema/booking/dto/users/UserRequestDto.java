@@ -10,8 +10,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Data
 @Builder
 @NoArgsConstructor
@@ -38,7 +36,4 @@ public class UserRequestDto {
 
     @NotBlank(message = "Status is required")
     private String status;
-
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
 }

@@ -4,7 +4,6 @@ import jakarta.validation.constraints.*;
 
 import lombok.Data;
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
 @Data
 public class WalletTransactionRequestDto {
@@ -12,7 +11,6 @@ public class WalletTransactionRequestDto {
     @NotNull @Positive
 
     private BigDecimal amount;
-    private LocalDateTime createdAt;
     @NotBlank
     private String reference;
     @NotBlank

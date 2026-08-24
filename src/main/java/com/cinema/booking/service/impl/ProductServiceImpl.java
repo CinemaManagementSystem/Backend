@@ -54,6 +54,7 @@ public class ProductServiceImpl implements ProductService {
 
         Product updated = productMapper.toEntity(dto);
         updated.setId(existing.getId());
+        updated.setCreatedAt(existing.getCreatedAt());
         updated.setProductCategory(productCategoryRepository.findById(dto.getProductCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("ProductCategory", dto.getProductCategoryId())));
 

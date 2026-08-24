@@ -12,7 +12,6 @@ public class WalletTransactionMapper {
     public WalletTransaction toEntity(WalletTransactionRequestDto dto) {
         WalletTransaction walletTransaction = new WalletTransaction();
         walletTransaction.setAmount(dto.getAmount());
-        walletTransaction.setCreatedAt(dto.getCreatedAt());
         walletTransaction.setReference(dto.getReference());
         walletTransaction.setStatus(dto.getStatus());
         walletTransaction.setTransactionType(dto.getTransactionType());

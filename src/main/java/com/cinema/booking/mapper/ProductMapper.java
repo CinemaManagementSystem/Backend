@@ -14,8 +14,7 @@ public class ProductMapper {
         product.setName(dto.getName());
         product.setPrice(dto.getPrice());
         product.setStockQuantity(dto.getStockQuantity());
-        product.setCreatedAt(dto.getCreatedAt());
-        product.setUpdatedAt(dto.getUpdatedAt());
+        // createdAt/updatedAt are managed by JPA lifecycle callbacks (@PrePersist/@PreUpdate)
         // TODO: FK fields (category) are resolved in the Service layer
         // using their respective repositories, then set on product before saving.
         return product;

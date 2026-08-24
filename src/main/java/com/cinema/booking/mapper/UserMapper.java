@@ -17,8 +17,7 @@ public class UserMapper {
         user.setPassword(dto.getPassword());
         user.setRole(dto.getRole());
         user.setStatus(dto.getStatus() != null ? dto.getStatus() : "ACTIVE");
-        user.setCreatedAt(dto.getCreatedAt() != null ? dto.getCreatedAt() : java.time.LocalDateTime.now());
-        user.setUpdatedAt(dto.getUpdatedAt() != null ? dto.getUpdatedAt() : java.time.LocalDateTime.now()); 
+        // createdAt/updatedAt are managed by JPA lifecycle callbacks (@PrePersist/@PreUpdate)
         return user;
     }
 

@@ -4,7 +4,6 @@ import jakarta.validation.constraints.*;
 
 import lombok.Data;
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
 @Data
 public class ProductRequestDto {
@@ -23,8 +22,4 @@ public class ProductRequestDto {
 
     @NotNull
     private Long productCategoryId;
-
-    private LocalDateTime createdAt;
-
-    private LocalDateTime updatedAt;
 }

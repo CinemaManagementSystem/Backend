@@ -12,8 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -207,8 +206,6 @@ public class DatabaseSeeder implements CommandLineRunner {
             user.setPassword(passwordEncoder.encode(rawPassword));
             user.setRole(role);
             user.setStatus("ACTIVE");
-            user.setCreatedAt(LocalDateTime.now());
-            user.setUpdatedAt(LocalDateTime.now());
             User saved = userRepository.save(user);
             log.info("Default {} user created: username='{}', email='{}'", role, username, email);
             return saved;
@@ -354,8 +351,6 @@ public class DatabaseSeeder implements CommandLineRunner {
             product.setIsAvailable(isAvailable);
             product.setStockQuantity(stockQuantity);
             product.setProductCategory(category);
-            product.setCreatedAt(LocalDateTime.now());
-            product.setUpdatedAt(LocalDateTime.now());
             productRepository.save(product);
             log.info("Default product created: name='{}'", name);
         }
