@@ -1,0 +1,13 @@
+FROM maven:3.9-eclipse-temurin-21
+
+WORKDIR /app
+
+# Pre-cache Maven dependencies
+COPY pom.xml .
+RUN mvn dependency:go-offline -B || true
+
+# Expose server port and remote debug port
+EXPOSE 8081 5005
+
+# Run with Spring Boot live-reload enabled
+ENTRYPOINT ["mvn", "spring-boot:run"]
