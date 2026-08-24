@@ -102,7 +102,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.DELETE, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/locations/**").hasRole("ADMIN")
 
                 // Staff & Admin operations (shows, catalog, screens, products, cash payment confirmation)
-                .requestMatchers(HttpMethod.POST, "/api/payments/*/confirm", "/api/payments/**/confirm").hasAnyRole("ADMIN", "STAFF")
+                .requestMatchers(HttpMethod.POST, "/api/payments/*/confirm").hasAnyRole("ADMIN", "STAFF")
                 .requestMatchers(HttpMethod.POST, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF")
                 .requestMatchers(HttpMethod.PUT, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF")
                 .requestMatchers(HttpMethod.DELETE, "/api/shows/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF")

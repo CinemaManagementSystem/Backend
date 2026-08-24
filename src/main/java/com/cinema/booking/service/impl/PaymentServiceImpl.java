@@ -43,25 +43,25 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponseDto create(PaymentRequestDto dto) {
         Payment payment = paymentMapper.toEntity(dto);
 
-        User customer = userRepository.findById(dto.getCustomerId())
-                .orElseThrow(() -> new ResourceNotFoundException("User", dto.getCustomerId()));
+        User customer = userRepository.findById(dto.customerId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", dto.customerId()));
         payment.setCustomer(customer);
 
         Booking booking = null;
-        if (dto.getBookingId() != null) {
-            booking = bookingRepository.findById(dto.getBookingId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId()));
+        if (dto.bookingId() != null) {
+            booking = bookingRepository.findById(dto.bookingId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId()));
             payment.setBooking(booking);
         }
 
         Order order = null;
-        if (dto.getOrderId() != null) {
-            order = orderRepository.findById(dto.getOrderId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.getOrderId()));
+        if (dto.orderId() != null) {
+            order = orderRepository.findById(dto.orderId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId()));
             payment.setOrder(order);
         }
 
-        PaymentMethod method = dto.getPaymentMethod();
+        PaymentMethod method = dto.paymentMethod();
         payment.setPaymentMethod(method);
         payment.setStatus(PaymentStatus.PENDING);
 
@@ -71,7 +71,7 @@ public class PaymentServiceImpl implements PaymentService {
         if (method == PaymentMethod.KHQR) {
             // Generate KHQR payload placeholder & MD5 hash with 10-minute expiry
             String randomHash = UUID.randomUUID().toString().replace("-", "");
-            payment.setKhqrString("00020101021229300012bakong@dev0101" + randomHash.substring(0, 16) + "5406" + dto.getAmount() + "5802KH53038406304");
+            payment.setKhqrString("00020101021229300012bakong@dev0101" + randomHash.substring(0, 16) + "5406" + dto.amount() + "5802KH53038406304");
             payment.setMd5Hash(randomHash);
             payment.setExpiresAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")).plusMinutes(10));
         } else {
@@ -88,7 +88,7 @@ public class PaymentServiceImpl implements PaymentService {
         transaction.setPayment(payment);
         transaction.setBooking(booking);
         transaction.setOrder(order);
-        transaction.setAmount(dto.getAmount());
+        transaction.setAmount(dto.amount());
         transaction.setTransactionType(method);
         transaction.setStatus(PaymentStatus.PENDING);
         transaction.setReference(txId);
@@ -168,20 +168,20 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponseDto update(Long id, PaymentRequestDto dto) {
         Payment existing = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
-        existing.setAmount(dto.getAmount());
-        existing.setPaymentMethod(dto.getPaymentMethod());
+        existing.setAmount(dto.amount());
+        existing.setPaymentMethod(dto.paymentMethod());
 
-        if (dto.getCustomerId() != null) {
-            existing.setCustomer(userRepository.findById(dto.getCustomerId())
-                    .orElseThrow(() -> new ResourceNotFoundException("User", dto.getCustomerId())));
+        if (dto.customerId() != null) {
+            existing.setCustomer(userRepository.findById(dto.customerId())
+                    .orElseThrow(() -> new ResourceNotFoundException("User", dto.customerId())));
         }
-        if (dto.getBookingId() != null) {
-            existing.setBooking(bookingRepository.findById(dto.getBookingId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId())));
+        if (dto.bookingId() != null) {
+            existing.setBooking(bookingRepository.findById(dto.bookingId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId())));
         }
-        if (dto.getOrderId() != null) {
-            existing.setOrder(orderRepository.findById(dto.getOrderId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.getOrderId())));
+        if (dto.orderId() != null) {
+            existing.setOrder(orderRepository.findById(dto.orderId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId())));
         }
         existing = paymentRepository.save(existing);
         return paymentMapper.toResponseDto(existing);

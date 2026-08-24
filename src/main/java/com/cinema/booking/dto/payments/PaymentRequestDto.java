@@ -1,23 +1,24 @@
 package com.cinema.booking.dto.payments;
 
 import com.cinema.booking.enums.PaymentMethod;
-import jakarta.validation.constraints.*;
-import lombok.Data;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+
 import java.math.BigDecimal;
 
-@Data
-public class PaymentRequestDto {
+public record PaymentRequestDto(
 
-    @NotNull @Positive
-    private BigDecimal amount;
+        @NotNull
+        @Positive
+        BigDecimal amount,
+        @NotNull
+        PaymentMethod paymentMethod,
+        @NotNull
+        Long customerId,
 
-    @NotNull
-    private PaymentMethod paymentMethod;   // CASH or KHQR
+        Long bookingId,
 
-    @NotNull
-    private Long customerId;
+        Long orderId
 
-    private Long bookingId;         // nullable (food-only order)
-
-    private Long orderId;           // nullable
+) {
 }

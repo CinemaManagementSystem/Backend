@@ -10,26 +10,26 @@ public class PaymentMapper {
 
     public Payment toEntity(PaymentRequestDto dto) {
         Payment payment = new Payment();
-        payment.setAmount(dto.getAmount());
-        payment.setPaymentMethod(dto.getPaymentMethod());
+        payment.setAmount(dto.amount());
+        payment.setPaymentMethod(dto.paymentMethod());
         // Status, paidAt, transactionId, khqrString, md5Hash, expiresAt are populated in Service layer
         return payment;
     }
 
     public PaymentResponseDto toResponseDto(Payment payment) {
-        PaymentResponseDto dto = new PaymentResponseDto();
-        dto.setId(payment.getId());
-        dto.setAmount(payment.getAmount());
-        dto.setPaidAt(payment.getPaidAt());
-        dto.setPaymentMethod(payment.getPaymentMethod());
-        dto.setStatus(payment.getStatus());
-        dto.setTransactionId(payment.getTransactionId());
-        dto.setKhqrString(payment.getKhqrString());
-        dto.setMd5Hash(payment.getMd5Hash());
-        dto.setExpiresAt(payment.getExpiresAt());
-        dto.setBookingId(payment.getBooking() != null ? payment.getBooking().getId() : null);
-        dto.setCustomerId(payment.getCustomer() != null ? payment.getCustomer().getId() : null);
-        dto.setOrderId(payment.getOrder() != null ? payment.getOrder().getId() : null);
-        return dto;
+        return new PaymentResponseDto(
+                payment.getId(),
+                payment.getAmount(),
+                payment.getPaymentMethod(),
+                payment.getStatus(),
+                payment.getTransactionId(),
+                payment.getPaidAt(),
+                payment.getExpiresAt(),
+                payment.getKhqrString(),
+                payment.getMd5Hash(),
+                payment.getBooking() != null ? payment.getBooking().getId() : null,
+                payment.getCustomer() != null ? payment.getCustomer().getId() : null,
+                payment.getOrder() != null ? payment.getOrder().getId() : null
+        );
     }
 }
