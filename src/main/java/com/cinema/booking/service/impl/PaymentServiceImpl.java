@@ -1,23 +1,27 @@
 package com.cinema.booking.service.impl;
 
-import com.cinema.booking.entity.Payment;
-import com.cinema.booking.entity.PaymentTransaction;
-import com.cinema.booking.entity.Booking;
-import com.cinema.booking.entity.User;
-import com.cinema.booking.entity.Order;
-import com.cinema.booking.enums.PaymentMethod;
-import com.cinema.booking.enums.PaymentStatus;
+import com.cinema.booking.dto.payments.BakongCheckResult;
+import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
+import com.cinema.booking.entity.Booking;
+import com.cinema.booking.entity.Order;
+import com.cinema.booking.entity.Payment;
+import com.cinema.booking.entity.PaymentTransaction;
+import com.cinema.booking.entity.User;
+import com.cinema.booking.enums.PaymentMethod;
+import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.mapper.PaymentMapper;
+import com.cinema.booking.repository.BookingRepository;
+import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
-import com.cinema.booking.repository.BookingRepository;
 import com.cinema.booking.repository.UserRepository;
-import com.cinema.booking.repository.OrderRepository;
+import com.cinema.booking.service.BakongService;
 import com.cinema.booking.service.PaymentService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +31,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
@@ -37,6 +42,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
+    private final BakongService bakongService;
 
     @Override
     @Transactional
@@ -69,11 +75,11 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setTransactionId(txId);
 
         if (method == PaymentMethod.KHQR) {
-            // Generate KHQR payload placeholder & MD5 hash with 10-minute expiry
-            String randomHash = UUID.randomUUID().toString().replace("-", "");
-            payment.setKhqrString("00020101021229300012bakong@dev0101" + randomHash.substring(0, 16) + "5406" + dto.amount() + "5802KH53038406304");
-            payment.setMd5Hash(randomHash);
-            payment.setExpiresAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")).plusMinutes(10));
+            // Generate standard EMVCo/NBC KHQR payload and MD5 hash
+            KhqrPayload khqr = bakongService.generateDynamicKhqr(dto.amount(), "USD", txId, "Cinema Booking " + txId);
+            payment.setKhqrString(khqr.khqrString());
+            payment.setMd5Hash(khqr.md5Hash());
+            payment.setExpiresAt(khqr.expiresAt());
         } else {
             // CASH payment at cinema counter
             payment.setKhqrString(null);
@@ -142,9 +148,11 @@ public class PaymentServiceImpl implements PaymentService {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
-        if (payment.getStatus() == PaymentStatus.PENDING && payment.getExpiresAt() != null) {
+        if (payment.getStatus() == PaymentStatus.PENDING) {
             LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
-            if (now.isAfter(payment.getExpiresAt())) {
+
+            // Check if payment has expired
+            if (payment.getExpiresAt() != null && now.isAfter(payment.getExpiresAt())) {
                 payment.setStatus(PaymentStatus.FAILED);
                 payment = paymentRepository.save(payment);
 
@@ -157,6 +165,17 @@ public class PaymentServiceImpl implements PaymentService {
                 transaction.setStatus(PaymentStatus.FAILED);
                 transaction.setReference("EXPIRED-" + payment.getTransactionId());
                 paymentTransactionRepository.save(transaction);
+
+                return paymentMapper.toResponseDto(payment);
+            }
+
+            // If KHQR payment is not expired, verify against Bakong Network
+            if (payment.getPaymentMethod() == PaymentMethod.KHQR && payment.getMd5Hash() != null) {
+                BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
+                if (result.paid()) {
+                    log.info("Payment #{} verified as PAID via Bakong MD5 check", id);
+                    return confirmPayment(id);
+                }
             }
         }
 
