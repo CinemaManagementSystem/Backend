@@ -9,12 +9,7 @@ import org.springframework.stereotype.Component;
 public class BookingSeatMapper {
 
     public BookingSeat toEntity(BookingSeatRequestDto dto) {
-        BookingSeat bookingSeat = new BookingSeat();
-        bookingSeat.setPrice(dto.getPrice());
-        bookingSeat.setStatus(dto.getStatus());
-        // TODO: FK fields (booking, seat) are resolved in the Service layer
-        // using their respective repositories, then set on bookingSeat before saving.
-        return bookingSeat;
+        return new BookingSeat();
     }
 
     public BookingSeatResponseDto toResponseDto(BookingSeat bookingSeat) {

@@ -13,12 +13,15 @@ import com.cinema.booking.repository.SeatRepository;
 import com.cinema.booking.service.BookingSeatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class BookingSeatServiceImpl implements BookingSeatService {
+
+    private static final String DEFAULT_STATUS = "PENDING";
 
     private final BookingSeatRepository bookingSeatRepository;
     private final BookingSeatMapper bookingSeatMapper;
@@ -27,13 +30,16 @@ public class BookingSeatServiceImpl implements BookingSeatService {
 
     @Override
     public BookingSeatResponseDto create(BookingSeatRequestDto dto) {
-        BookingSeat bookingSeat = bookingSeatMapper.toEntity(dto);
         Booking booking = bookingRepository.findById(dto.getBookingId())
                 .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId()));
-        bookingSeat.setBooking(booking);
         Seat seat = seatRepository.findById(dto.getSeatId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seat", dto.getSeatId()));
+
+        BookingSeat bookingSeat = bookingSeatMapper.toEntity(dto);
+        bookingSeat.setBooking(booking);
         bookingSeat.setSeat(seat);
+        bookingSeat.setPrice(seat.getPrice());
+        bookingSeat.setStatus(DEFAULT_STATUS);
         bookingSeat = bookingSeatRepository.save(bookingSeat);
         return bookingSeatMapper.toResponseDto(bookingSeat);
     }
@@ -42,14 +48,27 @@ public class BookingSeatServiceImpl implements BookingSeatService {
     public BookingSeatResponseDto update(Long id, BookingSeatRequestDto dto) {
         BookingSeat existing = bookingSeatRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("BookingSeat", id));
+        Booking booking = bookingRepository.findById(dto.getBookingId())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId()));
+        Seat seat = seatRepository.findById(dto.getSeatId())
+                .orElseThrow(() -> new ResourceNotFoundException("Seat", dto.getSeatId()));
+
         BookingSeat updated = bookingSeatMapper.toEntity(dto);
         updated.setId(existing.getId());
-        updated.setBooking(bookingRepository.findById(dto.getBookingId())
-                .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId())));
-        updated.setSeat(seatRepository.findById(dto.getSeatId())
-                .orElseThrow(() -> new ResourceNotFoundException("Seat", dto.getSeatId())));
+        updated.setBooking(booking);
+        updated.setSeat(seat);
+        updated.setPrice(resolvePrice(existing, seat));
+        updated.setStatus(existing.getStatus());
         updated = bookingSeatRepository.save(updated);
         return bookingSeatMapper.toResponseDto(updated);
+    }
+
+    private BigDecimal resolvePrice(BookingSeat existing, Seat seat) {
+        Long existingSeatId = existing.getSeat() != null ? existing.getSeat().getId() : null;
+        if (existingSeatId != null && existingSeatId.equals(seat.getId())) {
+            return existing.getPrice();
+        }
+        return seat.getPrice();
     }
 
     @Override

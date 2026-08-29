@@ -12,11 +12,11 @@ import org.springframework.context.annotation.Configuration;
 public class KhqrConfig {
 
     private String accountId = "cinema_official@dev";
-    private String token = "";
+    private String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiNGFkM2MwNzJjNDE4NDIzMiJ9LCJpYXQiOjE3ODc4MDk3NDQsImV4cCI6MTc5NTU4NTc0NH0.UcrmHeh0C1xWBeYEd5KvONxmnydKU8yE904wUtTx2kY";
     private String baseUrl = "https://api-bakong.nbc.gov.kh";
-    private String merchantName = "Sothearith Kim";
+    private String merchantName = "Movie System Ticket";
     private String merchantCity = "Phnom Penh";
     private String currency = "USD";
-    private String email = "";
-    private boolean mockMode = false;
+    private String email = "rithrith8442@gmail.com";
+
 }
