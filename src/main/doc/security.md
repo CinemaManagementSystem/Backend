@@ -1,0 +1,1 @@
+Security Warning: Never commit real credentials to version control. Use environment variables or a secrets manager in production.

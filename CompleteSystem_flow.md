@@ -14,7 +14,7 @@
          │                    │                    │
          ▼                    ▼                    ▼
    Audit Payments,       Fulfill Orders     Checkout & Pay
-   Wallets & System                         (Wallet/Gateway)
+   Khqr and cash 
          │                                         │
          │                                         ▼
          │                                   Booking Confirmed
@@ -24,4 +24,4 @@
                               │
                               ▼
                        CINEMA ENTRANCE
-                      (Ticket Verified)
+                      (Ticket Verified)

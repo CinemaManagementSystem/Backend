@@ -14,9 +14,9 @@ public class KhqrConfig {
     private String accountId = "cinema_official@dev";
     private String token = "";
     private String baseUrl = "https://api-bakong.nbc.gov.kh";
-    private String merchantName = "Cinema Booking System";
+    private String merchantName = "Sothearith Kim";
     private String merchantCity = "Phnom Penh";
     private String currency = "USD";
-    private boolean mockMode = true;
-    private String email = "[EMAIL_ADDRESS]";
+    private String email = "";
+    private boolean mockMode = false;
 }

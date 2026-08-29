@@ -1,6 +1,7 @@
 package com.cinema.booking.mapper;
 
 import com.cinema.booking.entity.Payment;
+import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,8 @@ public class PaymentMapper {
         Payment payment = new Payment();
         payment.setAmount(dto.amount());
         payment.setPaymentMethod(dto.paymentMethod());
+        payment.setStatus(PaymentStatus.PENDING);
+
         // Status, paidAt, transactionId, khqrString, md5Hash, expiresAt are populated in Service layer
         return payment;
     }

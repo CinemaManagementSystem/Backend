@@ -72,16 +72,17 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setStatus(PaymentStatus.PENDING);
 
         String txId = "TXN-" + method.name() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
-        payment.setTransactionId(txId);
 
         if (method == PaymentMethod.KHQR) {
             // Generate standard EMVCo/NBC KHQR payload and MD5 hash
+            payment.setTransactionId(txId);
             KhqrPayload khqr = bakongService.generateDynamicKhqr(dto.amount(), "USD", txId, "Cinema Booking " + txId);
             payment.setKhqrString(khqr.khqrString());
             payment.setMd5Hash(khqr.md5Hash());
             payment.setExpiresAt(khqr.expiresAt());
         } else {
-            // CASH payment at cinema counter
+            // CASH payment at cinema counter — no gateway reference, nothing to expire
+            payment.setTransactionId(null);
             payment.setKhqrString(null);
             payment.setMd5Hash(null);
             payment.setExpiresAt(null);
@@ -108,6 +109,12 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponseDto confirmPayment(Long id) {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+
+        if (payment.getStatus() == PaymentStatus.SUCCESS) {
+            // Idempotency guard: confirming twice (e.g. staff click + Bakong poll racing)
+            // must not create a duplicate SUCCESS transaction log.
+            return paymentMapper.toResponseDto(payment);
+        }
 
         payment.setStatus(PaymentStatus.SUCCESS);
         payment.setPaidAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
@@ -187,6 +194,11 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponseDto update(Long id, PaymentRequestDto dto) {
         Payment existing = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+
+        if (existing.getStatus() == PaymentStatus.SUCCESS) {
+            throw new IllegalStateException("Cannot modify a payment that has already succeeded");
+        }
+
         existing.setAmount(dto.amount());
         existing.setPaymentMethod(dto.paymentMethod());
 
