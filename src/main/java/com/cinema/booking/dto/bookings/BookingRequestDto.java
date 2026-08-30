@@ -14,8 +14,6 @@ public class BookingRequestDto {
     private LocalDateTime bookedAt;
     @NotBlank
     private String bookingCode;
-    @NotBlank
-    private String status;
     @NotNull @Positive
     private BigDecimal totalAmount;
     @NotNull

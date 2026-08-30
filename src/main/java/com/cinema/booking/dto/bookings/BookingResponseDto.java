@@ -1,6 +1,7 @@
 package com.cinema.booking.dto.bookings;
 
 import lombok.Data;
+import com.cinema.booking.enums.BookingStatus;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -11,7 +12,7 @@ public class BookingResponseDto {
 
     private LocalDateTime bookedAt;
     private String bookingCode;
-    private String status;
+    private BookingStatus status;
     private BigDecimal totalAmount;
     private Long customerId;
     private Long showId;

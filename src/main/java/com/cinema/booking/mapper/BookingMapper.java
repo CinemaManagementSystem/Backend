@@ -12,7 +12,6 @@ public class BookingMapper {
         Booking booking = new Booking();
         booking.setBookedAt(dto.getBookedAt());
         booking.setBookingCode(dto.getBookingCode());
-        booking.setStatus(dto.getStatus());
         booking.setTotalAmount(dto.getTotalAmount());
         // TODO: FK fields (customer, show) are resolved in the Service layer
         // using their respective repositories, then set on booking before saving.

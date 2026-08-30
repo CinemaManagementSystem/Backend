@@ -5,6 +5,7 @@ import com.cinema.booking.entity.User;
 import com.cinema.booking.entity.Show;
 import com.cinema.booking.dto.bookings.BookingRequestDto;
 import com.cinema.booking.dto.bookings.BookingResponseDto;
+import com.cinema.booking.enums.BookingStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.mapper.BookingMapper;
 import com.cinema.booking.repository.BookingRepository;
@@ -34,6 +35,7 @@ public class BookingServiceImpl implements BookingService {
         Show show = showRepository.findById(dto.getShowId())
                 .orElseThrow(() -> new ResourceNotFoundException("Show", dto.getShowId()));
         booking.setShow(show);
+        booking.setStatus(BookingStatus.PENDING);
         booking = bookingRepository.save(booking);
         return bookingMapper.toResponseDto(booking);
     }

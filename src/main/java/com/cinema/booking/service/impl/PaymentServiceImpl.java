@@ -9,6 +9,7 @@ import com.cinema.booking.entity.Order;
 import com.cinema.booking.entity.Payment;
 import com.cinema.booking.entity.PaymentTransaction;
 import com.cinema.booking.entity.User;
+import com.cinema.booking.enums.BookingStatus;
 import com.cinema.booking.enums.PaymentMethod;
 import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
@@ -110,19 +111,19 @@ public class PaymentServiceImpl implements PaymentService {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
-        if (payment.getStatus() == PaymentStatus.SUCCESS) {
+        if (payment.getStatus() == PaymentStatus.PAID) {
             // Idempotency guard: confirming twice (e.g. staff click + Bakong poll racing)
-            // must not create a duplicate SUCCESS transaction log.
+            // must not create a duplicate PAID transaction log.
             return paymentMapper.toResponseDto(payment);
         }
 
-        payment.setStatus(PaymentStatus.SUCCESS);
+        payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
 
         // Automatically update related Booking to CONFIRMED
         if (payment.getBooking() != null) {
             Booking booking = payment.getBooking();
-            booking.setStatus("CONFIRMED");
+            booking.transitionTo(BookingStatus.CONFIRMED);
             bookingRepository.save(booking);
         }
 
@@ -142,7 +143,7 @@ public class PaymentServiceImpl implements PaymentService {
         transaction.setOrder(payment.getOrder());
         transaction.setAmount(payment.getAmount());
         transaction.setTransactionType(payment.getPaymentMethod());
-        transaction.setStatus(PaymentStatus.SUCCESS);
+        transaction.setStatus(PaymentStatus.PAID);
         transaction.setReference(payment.getTransactionId() != null ? payment.getTransactionId() : "CONFIRM-" + System.currentTimeMillis());
         paymentTransactionRepository.save(transaction);
 
@@ -195,7 +196,7 @@ public class PaymentServiceImpl implements PaymentService {
         Payment existing = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
-        if (existing.getStatus() == PaymentStatus.SUCCESS) {
+        if (existing.getStatus() == PaymentStatus.PAID) {
             throw new IllegalStateException("Cannot modify a payment that has already succeeded");
         }
 
