@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KHQR Payment & Error Log Console</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QRCode.js for generating the QR code -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-h-screen p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <header class="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-4">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                    Cinema KHQR Payment Test & Log Console
+                </h1>
+                <p class="text-sm text-slate-400 mt-1">Live Backend Diagnostics, QR Code Generation & Real-Time Event Log</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    API: http://localhost:8081
+                </span>
+            </div>
+        </header>
+
+        <!-- Main Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+            <!-- Left Column: Payment & Tester (5 Cols) -->
+            <div class="lg:col-span-5 space-y-6">
+
+                <!-- 1. Authentication Card -->
+                <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-5 shadow-xl backdrop-blur">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+                            <span class="flex items-center justify-center w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 text-xs font-bold">1</span>
+                            Authentication
+                        </h2>
+                        <span id="auth-badge" class="text-xs px-2.5 py-0.5 rounded-full font-medium bg-slate-700 text-slate-300">Not Logged In</span>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Email</label>
+                            <input type="text" id="email" value="admin@cinema.com" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Password</label>
+                            <input type="password" id="password" value="Admin123" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
+                        </div>
+                        <button onclick="login()" id="btn-login" class="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
+                            <span>Login & Authenticate</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. Payment Form Card -->
+                <div id="payment-card" class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-5 shadow-xl backdrop-blur opacity-50 pointer-events-none transition-all">
+                    <h2 class="text-base font-bold text-slate-200 flex items-center gap-2 mb-4">
+                        <span class="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 text-xs font-bold">2</span>
+                        Create KHQR Transaction
+                    </h2>
+
+                    <div class="space-y-3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">Customer ID</label>
+                                <input type="number" id="customerId" value="3" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">Booking ID</label>
+                                <input type="number" id="bookingId" value="1" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Bakong Account ID</label>
+                            <input type="text" id="accountId" value="sothearith_kim@bkrt" placeholder="e.g. sothearith_kim@bkrt" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-cyan-300 focus:outline-none focus:border-indigo-500 transition">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Merchant / Receiver Name</label>
+                            <input type="text" id="merchantName" value="Cinema Booking System" placeholder="e.g. Cinema Booking System" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Amount ($)</label>
+                            <input type="number" id="amount" value="0.10" step="0.01" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-emerald-400 focus:outline-none focus:border-indigo-500 transition">
+                        </div>
+                        <button onclick="generateQR()" id="btn-generate" class="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2">
+                            <span>⚡ Generate KHQR Code</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3. QR Code Display Card -->
+                <div id="qr-card" class="hidden bg-slate-800/80 border border-slate-700/80 rounded-2xl p-5 shadow-xl backdrop-blur flex flex-col items-center">
+                    <!-- KHQR Banner Header -->
+                    <div class="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-xl p-3.5 mb-4 shadow-md text-center">
+                        <div class="flex items-center justify-center gap-2 mb-1">
+                            <span class="text-xs font-black tracking-widest px-2 py-0.5 bg-white text-red-600 rounded">KHQR</span>
+                            <span class="text-xs uppercase font-bold tracking-wider text-rose-100">Bakong Payment</span>
+                        </div>
+                        <h3 id="display-merchant-name" class="font-bold text-base text-white truncate">Cinema Booking System</h3>
+                        <p id="display-account-id" class="text-xs font-mono text-rose-200 mt-0.5 truncate">sothearith_kim@bkrt</p>
+                        <p id="display-amount" class="text-lg font-black text-amber-300 font-mono mt-1">$0.10 USD</p>
+                    </div>
+
+                    <!-- QR Frame -->
+                    <div class="p-4 bg-white rounded-2xl shadow-2xl transition-transform" id="qr-frame">
+                        <div id="qrcode"></div>
+                    </div>
+
+                    <!-- Status & Countdown -->
+                    <div class="mt-4 text-center w-full">
+                        <div id="status-badge" class="inline-block px-4 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            STATUS: PENDING
+                        </div>
+
+                        <div class="mt-2 text-xs font-semibold text-slate-300 flex items-center justify-center gap-1.5">
+                            <span>⏳ Time Remaining:</span>
+                            <span id="countdown" class="font-mono text-sm bg-rose-950/80 text-rose-300 px-2.5 py-0.5 rounded-md border border-rose-800/60 font-bold">10:00</span>
+                        </div>
+
+                        <p id="poll-info" class="text-[11px] text-slate-400 mt-2 animate-pulse">🔄 Polling API every 3 seconds for updates...</p>
+                    </div>
+
+                    <!-- Quick Actions -->
+                    <div class="mt-5 w-full pt-4 border-t border-slate-700/60 flex flex-col gap-2">
+                        <button onclick="manualConfirm()" class="w-full py-2 bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 rounded-lg text-xs font-semibold text-indigo-200 transition flex items-center justify-center gap-1.5">
+                            <span>🧪 (Debug) Force Manual Confirm</span>
+                        </button>
+                        <button onclick="copyKhqr()" class="w-full py-1.5 bg-slate-700/50 hover:bg-slate-700 border border-slate-600 rounded-lg text-xs font-medium text-slate-300 transition flex items-center justify-center gap-1.5">
+                            <span>📋 Copy Raw KHQR String</span>
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Column: Live Logs & Diagnostic Terminal (7 Cols) -->
+            <div class="lg:col-span-7 flex flex-col space-y-4">
+
+                <!-- Log Panel -->
+                <div class="bg-slate-950 border border-slate-800 rounded-2xl flex flex-col shadow-2xl h-[650px] overflow-hidden">
+                    <!-- Terminal Bar -->
+                    <div class="bg-slate-900/90 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full bg-rose-500/80 inline-block"></span>
+                            <span class="w-3 h-3 rounded-full bg-amber-500/80 inline-block"></span>
+                            <span class="w-3 h-3 rounded-full bg-emerald-500/80 inline-block"></span>
+                            <span class="text-xs font-mono font-semibold text-slate-400 ml-2">Console & Error Diagnostics</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="clearLogs()" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition font-mono">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- Terminal Output Window -->
+                    <div id="log-container" class="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-2 select-text">
+                        <div class="text-slate-500 italic">// Diagnostics console initialized. Ready for requests...</div>
+                    </div>
+
+                    <!-- Tag Inspector Panel -->
+                    <div id="tag-inspector" class="hidden bg-slate-900 border-t border-slate-800 p-3 max-h-48 overflow-y-auto text-[11px] font-mono">
+                        <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5">
+                            <span>🔍 KHQR EMV Tag Breakdown</span>
+                        </div>
+                        <div id="tags-content" class="space-y-1 text-slate-400"></div>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        let authToken = '';
+        let currentPaymentId = null;
+        let currentKhqrString = '';
+        let pollInterval = null;
+        let countdownInterval = null;
+
+        const API_BASE = 'http://localhost:8081/api';
+
+        function log(level, message, data = null) {
+            const container = document.getElementById('log-container');
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+
+            const colorMap = {
+                'INFO': 'text-blue-400 bg-blue-500/10 border-blue-500/30',
+                'SUCCESS': 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+                'WARN': 'text-amber-400 bg-amber-500/10 border-amber-500/30',
+                'ERROR': 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+            };
+
+            const line = document.createElement('div');
+            line.className = 'p-2 rounded border leading-relaxed ' + (colorMap[level] || 'text-slate-300 border-slate-800');
+
+            let content = `<span class="text-slate-500">[${timeStr}]</span> <span class="font-bold">[${level}]</span> ${escapeHtml(message)}`;
+            if (data) {
+                const jsonStr = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+                content += `<pre class="mt-1.5 p-2 bg-black/40 rounded text-[11px] overflow-x-auto text-slate-300 border border-white/5">${escapeHtml(jsonStr)}</pre>`;
+            }
+
+            line.innerHTML = content;
+            container.appendChild(line);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('log-container').innerHTML = '<div class="text-slate-500 italic">// Console cleared.</div>';
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        async function login() {
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const btn = document.getElementById('btn-login');
+
+            btn.disabled = true;
+            btn.innerText = 'Authenticating...';
+            log('INFO', `Attempting authentication for ${email}...`);
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const status = response.status;
+                const data = await response.json().catch(() => null);
+
+                if (response.ok && data?.accessToken) {
+                    authToken = data.accessToken;
+                    document.getElementById('auth-badge').innerText = '✅ Authenticated';
+                    document.getElementById('auth-badge').className = 'text-xs px-2.5 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+                    document.getElementById('payment-card').classList.remove('opacity-50', 'pointer-events-none');
+                    log('SUCCESS', `Login successful! (HTTP ${status}) - Token acquired.`);
+                } else {
+                    log('ERROR', `Login failed (HTTP ${status})`, data || 'No response body');
+                    alert(`Login failed (HTTP ${status}): ${data?.message || 'Check credentials'}`);
+                }
+            } catch (err) {
+                log('ERROR', `Network Error during login: ${err.message}`, err);
+                alert(`Network error connecting to backend: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Login & Authenticate';
+            }
+        }
+
+        async function generateQR() {
+            const amount = parseFloat(document.getElementById('amount').value);
+            const customerId = parseInt(document.getElementById('customerId').value);
+            const bookingId = parseInt(document.getElementById('bookingId').value);
+            const accountId = document.getElementById('accountId').value.trim();
+            const merchantName = document.getElementById('merchantName').value.trim();
+            const btn = document.getElementById('btn-generate');
+
+            if (!authToken) {
+                alert('Please authenticate first!');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = 'Generating KHQR...';
+
+            if (pollInterval) clearInterval(pollInterval);
+            if (countdownInterval) clearInterval(countdownInterval);
+
+            const payload = { 
+                amount, 
+                paymentMethod: 'KHQR', 
+                customerId, 
+                bookingId,
+                accountId: accountId || undefined,
+                merchantName: merchantName || undefined
+            };
+            log('INFO', 'Sending payment creation request (POST /api/payments)...', payload);
+
+            try {
+                const response = await fetch(`${API_BASE}/payments`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const status = response.status;
+                const data = await response.json().catch(() => null);
+
+                if (response.ok && data) {
+                    currentPaymentId = data.id;
+                    currentKhqrString = data.khqrString;
+
+                    log('SUCCESS', `Payment created successfully! (Payment ID: ${data.id}, Status: ${data.status})`, data);
+
+                    // Update KHQR Card Banner Display
+                    document.getElementById('display-merchant-name').innerText = merchantName || 'Cinema Booking System';
+                    document.getElementById('display-account-id').innerText = accountId || 'sothearith_kim@bkrt';
+                    document.getElementById('display-amount').innerText = `$${amount.toFixed(2)} USD`;
+
+                    // Show QR Card
+                    document.getElementById('qr-card').classList.remove('hidden');
+                    document.getElementById('qrcode').innerHTML = '';
+                    document.getElementById('qr-frame').style.opacity = '1';
+                    updateStatusBadge(data.status || 'PENDING');
+
+                    // Render visual QR Code
+                    new QRCode(document.getElementById("qrcode"), {
+                        text: data.khqrString,
+                        width: 240,
+                        height: 240,
+                        colorDark: "#0f172a",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.M
+                    });
+
+                    // Decode & Inspect Tags
+                    renderTagInspector(data.khqrString);
+
+                    // Start 10-min countdown
+                    startCountdown(600);
+
+                    // Start background polling
+                    startPolling();
+                } else {
+                    log('ERROR', `Payment generation failed (HTTP ${status})`, data);
+                    alert(`Payment creation failed (HTTP ${status}): ${data?.message || 'Check logs'}`);
+                }
+            } catch (err) {
+                log('ERROR', `Network exception during payment creation: ${err.message}`, err);
+                alert(`Error: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '⚡ Generate KHQR Code';
+            }
+        }
+
+        function renderTagInspector(khqr) {
+            const inspector = document.getElementById('tag-inspector');
+            const content = document.getElementById('tags-content');
+            inspector.classList.remove('hidden');
+            content.innerHTML = `
+                <div><span class="text-blue-400 font-bold">Raw String:</span> <span class="break-all">${escapeHtml(khqr)}</span></div>
+                <div class="mt-1 text-slate-500 text-[10px]">Length: ${khqr.length} chars | Verified Tags: 00(Payload), 01(Dynamic), 29(Account), 52(MCC), 53(Currency), 54(Amount), 58(Country), 59(Name), 60(City), 62(Bill), 99(Timestamp), 63(CRC)</div>
+            `;
+        }
+
+        function startCountdown(durationSeconds) {
+            let remaining = durationSeconds;
+            const countdownEl = document.getElementById('countdown');
+
+            const updateDisplay = () => {
+                const mins = Math.floor(remaining / 60);
+                const secs = remaining % 60;
+                countdownEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            };
+
+            updateDisplay();
+
+            countdownInterval = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearInterval(countdownInterval);
+                    clearInterval(pollInterval);
+                    countdownEl.innerText = '00:00';
+                    updateStatusBadge('EXPIRED');
+                    document.getElementById('qr-frame').style.opacity = '0.3';
+                    document.getElementById('poll-info').innerText = '❌ QR code expired. Please generate a new QR code.';
+                    document.getElementById('poll-info').classList.remove('animate-pulse');
+                    log('WARN', `QR code validity window (10 minutes) reached expiration.`);
+                } else {
+                    updateDisplay();
+                }
+            }, 1000);
+        }
+
+        function startPolling() {
+            log('INFO', `Starting status poller for Payment #${currentPaymentId} (every 3s)...`);
+
+            pollInterval = setInterval(async () => {
+                if (!currentPaymentId) return;
+
+                try {
+                    const response = await fetch(`${API_BASE}/payments/${currentPaymentId}/status`, {
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+
+                    if (response.ok) {
+                        const statusObj = await response.json();
+                        const statusStr = typeof statusObj === 'string' ? statusObj : (statusObj.status || "PENDING");
+
+                        updateStatusBadge(statusStr);
+
+                        if (statusStr === 'PAID' || statusStr === 'SUCCESS') {
+                            clearInterval(pollInterval);
+                            if (countdownInterval) clearInterval(countdownInterval);
+                            document.getElementById('poll-info').innerText = '🎉 Payment confirmed and booking active!';
+                            document.getElementById('poll-info').classList.remove('animate-pulse');
+                            log('SUCCESS', `🎉 PAYMENT COMPLETED! Status changed to PAID.`);
+                        } else if (statusStr === 'FAILED' || statusStr === 'EXPIRED') {
+                            clearInterval(pollInterval);
+                            if (countdownInterval) clearInterval(countdownInterval);
+                            document.getElementById('poll-info').innerText = '❌ Payment marked as ' + statusStr;
+                            log('WARN', `Payment status is now ${statusStr}.`);
+                        }
+                    } else {
+                        log('WARN', `Status polling returned HTTP ${response.status}`);
+                    }
+                } catch (err) {
+                    log('WARN', `Polling network glitch: ${err.message}`);
+                }
+            }, 3000);
+        }
+
+        async function manualConfirm() {
+            if (!currentPaymentId) {
+                alert('Please generate a QR code first!');
+                return;
+            }
+
+            log('INFO', `Executing manual confirmation for Payment #${currentPaymentId}...`);
+
+            try {
+                const response = await fetch(`${API_BASE}/payments/${currentPaymentId}/confirm`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                const status = response.status;
+                const data = await response.json().catch(() => null);
+
+                if (response.ok) {
+                    log('SUCCESS', `Manual confirmation successful (HTTP ${status})!`, data);
+                } else {
+                    log('ERROR', `Manual confirm failed (HTTP ${status})`, data);
+                    alert(`Confirmation failed: ${data?.message || 'See console log'}`);
+                }
+            } catch (err) {
+                log('ERROR', `Exception during confirmation: ${err.message}`, err);
+            }
+        }
+
+        function updateStatusBadge(status) {
+            const badge = document.getElementById('status-badge');
+            badge.innerText = `STATUS: ${status}`;
+
+            if (status === 'PAID' || status === 'SUCCESS') {
+                badge.className = 'inline-block px-4 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+            } else if (status === 'FAILED' || status === 'EXPIRED') {
+                badge.className = 'inline-block px-4 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30';
+            } else {
+                badge.className = 'inline-block px-4 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30';
+            }
+        }
+
+        function copyKhqr() {
+            if (!currentKhqrString) return;
+            navigator.clipboard.writeText(currentKhqrString);
+            log('INFO', '📋 Copied raw KHQR string to clipboard.');
+            alert('Copied KHQR String to clipboard!');
+        }
+    </script>
+</body>
+</html>

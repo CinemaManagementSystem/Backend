@@ -43,6 +43,8 @@ import java.util.List;
 public class SecurityConfig {
 
     private static final String[] PUBLIC_PATHS = {
+        "/",
+        "/index.html",
         "/api/auth/**",
         "/swagger-ui/**",
         "/swagger-ui.html",

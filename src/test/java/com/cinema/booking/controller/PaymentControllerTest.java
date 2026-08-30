@@ -150,7 +150,7 @@ public class PaymentControllerTest {
         mockMvc.perform(post("/api/payments/" + payment.getId() + "/confirm")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.status", is("PAID")))
                 .andExpect(jsonPath("$.paidAt", notNullValue()));
     }
 

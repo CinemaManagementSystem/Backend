@@ -1,5 +1,6 @@
 package com.cinema.booking.service.impl;
 
+import com.cinema.booking.config.KhqrConfig;
 import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.dto.payments.PaymentRequestDto;
@@ -44,6 +45,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
     private final BakongService bakongService;
+    private final KhqrConfig khqrConfig;
 
     @Override
     @Transactional
@@ -77,7 +79,15 @@ public class PaymentServiceImpl implements PaymentService {
         if (method == PaymentMethod.KHQR) {
             // Generate standard EMVCo/NBC KHQR payload and MD5 hash
             payment.setTransactionId(txId);
-            KhqrPayload khqr = bakongService.generateDynamicKhqr(dto.amount(), "USD", txId, "Cinema Booking " + txId);
+            String currency = khqrConfig.getCurrency() != null ? khqrConfig.getCurrency() : "USD";
+            KhqrPayload khqr = bakongService.generateDynamicKhqr(
+                    dto.amount(),
+                    currency,
+                    txId,
+                    "Cinema Booking",
+                    dto.accountId(),
+                    dto.merchantName()
+            );
             payment.setKhqrString(khqr.khqrString());
             payment.setMd5Hash(khqr.md5Hash());
             payment.setExpiresAt(khqr.expiresAt());

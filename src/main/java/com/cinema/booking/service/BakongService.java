@@ -17,6 +17,8 @@ public interface BakongService {
      */
     KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description);
 
+    KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description, String accountId, String merchantName);
+
     /**
      * Checks the transaction status on Bakong network by its MD5 hash.
      *

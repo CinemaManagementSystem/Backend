@@ -87,6 +87,11 @@
             <version>2.0.0</version>
         </dependency>
         <dependency>
+            <groupId>kh.gov.nbc.bakong_khqr</groupId>
+            <artifactId>sdk-java</artifactId>
+            <version>1.0.0.17</version>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
