@@ -93,4 +93,3 @@ Naming: table names are **pluralized snake_case**; entity class names are singul
 - **Run Tests:** `.\mvnw.cmd test`
 - **Run Application:** `.\mvnw.cmd spring-boot:run`
 - **Swagger UI:** `http://localhost:8081/swagger-ui/index.html` (or port configured in `application.properties`)
-

@@ -1,20 +1,38 @@
 package com.cinema.booking.config;
 
-import com.cinema.booking.entity.*;
-import com.cinema.booking.enums.Role;
-import com.cinema.booking.repository.*;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
+import com.cinema.booking.entity.Location;
+import com.cinema.booking.entity.Movie;
+import com.cinema.booking.entity.MovieCategory;
+import com.cinema.booking.entity.Product;
+import com.cinema.booking.entity.ProductCategory;
+import com.cinema.booking.entity.Screen;
+import com.cinema.booking.entity.Seat;
+import com.cinema.booking.entity.Theater;
+import com.cinema.booking.entity.User;
+import com.cinema.booking.enums.Role;
+import com.cinema.booking.repository.LocationRepository;
+import com.cinema.booking.repository.MovieCategoryRepository;
+import com.cinema.booking.repository.MovieRepository;
+import com.cinema.booking.repository.ProductCategoryRepository;
+import com.cinema.booking.repository.ProductRepository;
+import com.cinema.booking.repository.ScreenRepository;
+import com.cinema.booking.repository.SeatRepository;
+import com.cinema.booking.repository.TheaterRepository;
+import com.cinema.booking.repository.UserRepository;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
 @Profile("!test")
@@ -340,3 +358,5 @@ public class DatabaseSeeder implements CommandLineRunner {
         }
     }
 }
+
+
