@@ -18,7 +18,14 @@ public record PaymentRequestDto(
 
         Long bookingId,
 
-        Long orderId
+        Long orderId,
+
+        String merchantName,
+
+        String accountId
 
 ) {
+    public PaymentRequestDto(BigDecimal amount, PaymentMethod paymentMethod, Long customerId, Long bookingId, Long orderId) {
+        this(amount, paymentMethod, customerId, bookingId, orderId, null, null);
+    }
 }

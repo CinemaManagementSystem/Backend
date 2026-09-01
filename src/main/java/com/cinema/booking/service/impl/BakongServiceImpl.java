@@ -4,6 +4,11 @@ import com.cinema.booking.config.KhqrConfig;
 import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.service.BakongService;
+import kh.gov.nbc.bakong_khqr.BakongKHQR;
+import kh.gov.nbc.bakong_khqr.model.IndividualInfo;
+import kh.gov.nbc.bakong_khqr.model.KHQRCurrency;
+import kh.gov.nbc.bakong_khqr.model.KHQRData;
+import kh.gov.nbc.bakong_khqr.model.KHQRResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -27,41 +32,88 @@ public class BakongServiceImpl implements BakongService {
 
     @Override
     public KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description) {
-        String currCode = "USD".equalsIgnoreCase(currency) ? "840" : "116";
-        String formattedAmount = amount.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
-        String accountId = khqrConfig.getAccountId() != null ? khqrConfig.getAccountId() : "cinema_official@dev";
-        String merchantName = khqrConfig.getMerchantName() != null ? khqrConfig.getMerchantName() : "Cinema Booking";
-        String merchantCity = khqrConfig.getMerchantCity() != null ? khqrConfig.getMerchantCity() : "Phnom Penh";
+        return generateDynamicKhqr(amount, currency, billNumber, description, null, null);
+    }
 
-        // Tag 29: Merchant Account Info (Individual / Bakong Account)
-        String tag29Value = tlv("00", accountId);
+    @Override
+    public KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description, String customAccountId, String customMerchantName) {
+        String accountId = (customAccountId != null && !customAccountId.isBlank())
+                ? customAccountId.trim()
+                : (khqrConfig.getAccountId() != null && !khqrConfig.getAccountId().isBlank() ? khqrConfig.getAccountId().trim() : "sothearith_kim@bkrt");
 
-        // Tag 62: Additional Data Field (Bill number & Store label)
-        String tag62Value = tlv("01", billNumber != null ? billNumber : "BILL-" + System.currentTimeMillis())
-                + (description != null && !description.isBlank() ? tlv("08", description) : "");
+        String merchantName = (customMerchantName != null && !customMerchantName.isBlank())
+                ? customMerchantName.trim()
+                : (khqrConfig.getMerchantName() != null && !khqrConfig.getMerchantName().isBlank() ? khqrConfig.getMerchantName().trim() : "Cinema Booking System");
 
-        StringBuilder emv = new StringBuilder();
-        emv.append(tlv("00", "01"));                   // Payload Format Indicator
-        emv.append(tlv("01", "12"));                   // Point of Initiation Method (12 = Dynamic)
-        emv.append(tlv("29", tag29Value));             // Merchant Account Information
-        emv.append(tlv("52", "7832"));                 // Merchant Category Code (7832 = Motion Picture Theaters)
-        emv.append(tlv("53", currCode));               // Transaction Currency (840 = USD, 116 = KHR)
-        emv.append(tlv("54", formattedAmount));         // Transaction Amount
-        emv.append(tlv("58", "KH"));                   // Country Code
-        emv.append(tlv("59", merchantName));           // Merchant Name
-        emv.append(tlv("60", merchantCity));           // Merchant City
-        emv.append(tlv("62", tag62Value));             // Additional Data
+        String merchantCity = (khqrConfig.getMerchantCity() != null && !khqrConfig.getMerchantCity().isBlank())
+                ? khqrConfig.getMerchantCity().trim()
+                : "Phnom Penh";
 
-        emv.append("6304");                            // Tag 63 (CRC) with length 04
-        String crc = calculateCrc16(emv.toString());
-        emv.append(crc);
+        String normalizedCurrency = (currency != null && !currency.isBlank()) ? currency.trim().toUpperCase() : "USD";
+        KHQRCurrency khqrCurrency = "KHR".equalsIgnoreCase(normalizedCurrency) ? KHQRCurrency.KHR : KHQRCurrency.USD;
 
-        String khqrString = emv.toString();
-        String md5Hash = calculateMd5(khqrString);
-        LocalDateTime expiresAt = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")).plusMinutes(10);
+        String bill = (billNumber != null && !billNumber.isBlank()) ? billNumber.trim() : "BILL-" + System.currentTimeMillis();
+        if (bill.length() > 25) {
+            bill = bill.substring(0, 25);
+        }
 
-        log.info("Generated dynamic KHQR for bill {}: amount={}, md5={}", billNumber, formattedAmount, md5Hash);
-        return new KhqrPayload(khqrString, md5Hash, expiresAt, amount, currency, billNumber);
+        String storeLabel = (description != null && !description.isBlank()) ? description.trim() : "Cinema Booking";
+        if (storeLabel.length() > 25) {
+            storeLabel = storeLabel.substring(0, 25);
+        }
+
+        int expiryMinutes = khqrConfig.getExpiryMinutes() > 0 ? khqrConfig.getExpiryMinutes() : 10;
+        long expirationEpochMillis = System.currentTimeMillis() + ((long) expiryMinutes * 60 * 1000L);
+
+        log.info("Generating KHQR: amount={}, currency={}, accountId={}, billNumber={}",
+                amount, normalizedCurrency, accountId, bill);
+
+        // Populate IndividualInfo model for official NBC KHQR SDK
+        IndividualInfo individualInfo = new IndividualInfo();
+        individualInfo.setBakongAccountId(accountId);
+        individualInfo.setMerchantName(merchantName);
+        individualInfo.setMerchantCity(merchantCity);
+        individualInfo.setCurrency(khqrCurrency);
+        individualInfo.setAmount(amount != null ? amount.doubleValue() : 0.0);
+        individualInfo.setBillNumber(bill);
+        individualInfo.setStoreLabel(storeLabel);
+        individualInfo.setTerminalLabel("POS-01");
+        // Tag 99 expirationTimestamp: must be future epoch timestamp in milliseconds for dynamic QR
+        individualInfo.setExpirationTimestamp(expirationEpochMillis);
+
+        // Generate dynamic KHQR using official NBC Bakong KHQR SDK
+        KHQRResponse response = BakongKHQR.generateIndividual(individualInfo);
+
+        if (response == null || response.getKHQRStatus() == null || response.getKHQRStatus().getCode() != 0) {
+            String errorMsg = (response != null && response.getKHQRStatus() != null)
+                    ? response.getKHQRStatus().getMessage()
+                    : "Unknown error during KHQR generation";
+            log.error("Failed to generate dynamic KHQR: {}", errorMsg);
+            throw new IllegalStateException("Failed to generate dynamic KHQR: " + errorMsg);
+        }
+
+        if (!(response.getData() instanceof KHQRData khqrData)) {
+            log.error("Invalid response data format from Bakong KHQR SDK: {}", response.getData());
+            throw new IllegalStateException("Invalid response data format from Bakong KHQR SDK");
+        }
+
+        String khqrString = khqrData.getQr();
+        String md5Hash = khqrData.getMd5();
+
+        // Validate generated QR string with SDK verify method
+        KHQRResponse verifyResponse = BakongKHQR.verify(khqrString);
+        if (verifyResponse != null && verifyResponse.getKHQRStatus() != null && verifyResponse.getKHQRStatus().getCode() != 0) {
+            log.warn("Generated KHQR failed verification: code={}, message={}",
+                    verifyResponse.getKHQRStatus().getCode(), verifyResponse.getKHQRStatus().getMessage());
+        }
+
+        // Application-level timeout in Asia/Phnom_Penh timezone
+        LocalDateTime expiresAt = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")).plusMinutes(expiryMinutes);
+
+        log.info("Generated KHQR MD5: {}", md5Hash);
+        log.info("Application payment expiry: {}", expiresAt);
+
+        return new KhqrPayload(khqrString, md5Hash, expiresAt, amount, normalizedCurrency, bill);
     }
 
     @Override
@@ -70,17 +122,16 @@ public class BakongServiceImpl implements BakongService {
             return BakongCheckResult.failed(md5Hash, "Invalid or missing MD5 hash");
         }
 
-        // Mock/Development mode check
+        // Mock / Development mode check
         if (khqrConfig.isMockMode() || khqrConfig.getToken() == null || khqrConfig.getToken().isBlank()) {
             log.debug("Bakong running in mock mode for MD5 check: {}", md5Hash);
-            // In mock mode, if hash starts with "MOCK_PAID_" or contains "PAID", simulate approved transaction
-            if (md5Hash.contains("PAID")) {
+            if (md5Hash.contains("PAID") || md5Hash.startsWith("MOCK_PAID_")) {
                 return BakongCheckResult.paid(md5Hash, "mock_customer@bakong", khqrConfig.getAccountId());
             }
             return BakongCheckResult.pending(md5Hash, "Transaction is pending in mock mode");
         }
 
-        // Production / Live Bakong Open API call
+        // Live Bakong Open API call
         try {
             String url = khqrConfig.getBaseUrl() + "/v1/check_transaction_by_md5";
             RestClient restClient = RestClient.builder().build();
@@ -113,14 +164,6 @@ public class BakongServiceImpl implements BakongService {
             log.warn("Failed to check Bakong transaction by MD5 {} from live API: {}", md5Hash, ex.getMessage());
             return BakongCheckResult.pending(md5Hash, "Bakong check failed: " + ex.getMessage());
         }
-    }
-
-    private static String tlv(String tag, String value) {
-        if (value == null) {
-            return "";
-        }
-        int length = value.getBytes(StandardCharsets.UTF_8).length;
-        return tag + String.format("%02d", length) + value;
     }
 
     public static String calculateCrc16(String input) {
