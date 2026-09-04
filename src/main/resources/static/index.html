@@ -78,10 +78,6 @@
                             </div>
                         </div>
 
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-400 mb-1">Bakong Account ID</label>
-                            <input type="text" id="accountId" value="sothearith_kim@bkrt" placeholder="e.g. sothearith_kim@bkrt" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-cyan-300 focus:outline-none focus:border-indigo-500 transition">
-                        </div>
 
                         <div>
                             <label class="block text-xs font-semibold text-slate-400 mb-1">Merchant / Receiver Name</label>
@@ -107,8 +103,8 @@
                             <span class="text-xs uppercase font-bold tracking-wider text-rose-100">Bakong Payment</span>
                         </div>
                         <h3 id="display-merchant-name" class="font-bold text-base text-white truncate">Cinema Booking System</h3>
-                        <p id="display-account-id" class="text-xs font-mono text-rose-200 mt-0.5 truncate">sothearith_kim@bkrt</p>
-                        <p id="display-amount" class="text-lg font-black text-amber-300 font-mono mt-1">$0.10 USD</p>
+                        <p id="display-account-id" class="text-xs font-mono text-rose-200 mt-0.5 truncate">sothearith_kim1@bkrt</p>
+                        <p id="display-amount" class="text-lg font-black text-amber-300 font-mono mt-1">$0.003 USD</p>
                     </div>
 
                     <!-- QR Frame -->
@@ -316,7 +312,7 @@
 
                     // Update KHQR Card Banner Display
                     document.getElementById('display-merchant-name').innerText = merchantName || 'Cinema Booking System';
-                    document.getElementById('display-account-id').innerText = accountId || 'sothearith_kim@bkrt';
+                    document.getElementById('display-account-id').innerText = accountId || 'sothearith_kim1@bkrt';
                     document.getElementById('display-amount').innerText = `$${amount.toFixed(2)} USD`;
 
                     // Show QR Card

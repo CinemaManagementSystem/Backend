@@ -2,11 +2,13 @@ package com.cinema.booking.controller;
 
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.entity.Payment;
+import com.cinema.booking.entity.PaymentTransaction;
 import com.cinema.booking.entity.User;
 import com.cinema.booking.enums.PaymentMethod;
 import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.enums.Role;
 import com.cinema.booking.repository.PaymentRepository;
+import com.cinema.booking.repository.PaymentTransactionRepository;
 import com.cinema.booking.repository.UserRepository;
 import com.cinema.booking.security.JwtService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,8 +26,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -39,6 +43,9 @@ public class PaymentControllerTest {
 
     @Autowired
     private PaymentRepository paymentRepository;
+
+    @Autowired
+    private PaymentTransactionRepository paymentTransactionRepository;
 
     @Autowired
     private UserRepository userRepository;
@@ -62,6 +69,7 @@ public class PaymentControllerTest {
 
     @BeforeEach
     void setUp() {
+        paymentTransactionRepository.deleteAll();
         paymentRepository.deleteAll();
 
         customerUser = new User();
@@ -187,5 +195,28 @@ public class PaymentControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id", is(payment.getId().intValue())))
                 .andExpect(jsonPath("$.status", is("PENDING")));
+    }
+
+    @Test
+    @DisplayName("Status check should confirm KHQR payment and append PAID transaction when Bakong reports paid")
+    void testCheckStatusConfirmsPaidKhqrPayment() throws Exception {
+        Payment payment = new Payment();
+        payment.setAmount(new BigDecimal("18.00"));
+        payment.setPaymentMethod(PaymentMethod.KHQR);
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setCustomer(customerUser);
+        payment.setTransactionId("TXN-KHQR-TEST104");
+        payment.setMd5Hash("MOCK_PAID_1234567890abcdef");
+        payment = paymentRepository.save(payment);
+
+        mockMvc.perform(get("/api/payments/" + payment.getId() + "/status")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id", is(payment.getId().intValue())))
+                .andExpect(jsonPath("$.status", is("PAID")))
+                .andExpect(jsonPath("$.paidAt", notNullValue()));
+
+        List<PaymentTransaction> transactions = paymentTransactionRepository.findByPaymentId(payment.getId());
+        assertTrue(transactions.stream().anyMatch(transaction -> transaction.getStatus() == PaymentStatus.PAID));
     }
 }
