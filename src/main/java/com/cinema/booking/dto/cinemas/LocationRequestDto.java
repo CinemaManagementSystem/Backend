@@ -1,9 +1,10 @@
 package com.cinema.booking.dto.cinemas;
 
-import jakarta.validation.constraints.*;
-
-import lombok.Data;
 import java.math.BigDecimal;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.Data;
 
 @Data
 public class LocationRequestDto {
@@ -16,6 +17,7 @@ public class LocationRequestDto {
     private String googleMapsUrl;
     @NotNull
     private BigDecimal latitude;
+    
     @NotNull
     private BigDecimal longitude;
     @NotBlank
