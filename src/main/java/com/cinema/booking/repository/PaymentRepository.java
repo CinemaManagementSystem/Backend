@@ -17,6 +17,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     List<Payment> findByStatusAndPaymentMethodAndMd5HashIsNotNull(PaymentStatus status, PaymentMethod paymentMethod);
 
+    List<Payment> findByCustomerId(Long customerId);
+
     Optional<Payment> findByMd5Hash(String md5Hash);
 
     Optional<Payment> findByTransactionId(String transactionId);

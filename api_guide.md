@@ -150,16 +150,44 @@ All errors return a consistent JSON shape:
 
 ## 4. Rate Limiting
 
-| Endpoint Pattern | Limit | Window |
-|---|---|---|
-| `/api/auth/**` | 10 requests | per minute |
-| All other `/api/**` | 100 requests | per minute |
+Rate limits are endpoint-specific and use a 60-second window.
+
+| Method | Endpoint | Limit | Window | Rate-limit key | Auth | Role |
+|---|---|---:|---|---|---|---|
+| `POST` | `/api/auth/login` | 5 | 1 minute | IP + username/email when present | No | Public |
+| `POST` | `/api/auth/register` | 3 | 1 minute | IP | No | Public |
+| `POST` | `/api/auth/refresh` | 10 | 1 minute | IP + refresh-token fingerprint when present | No | Public |
+| `POST` | `/api/auth/logout` | 20 | 1 minute | Authenticated user, fallback IP | Token recommended | User |
+| `POST` | `/api/payments` | 5 | 1 minute | Authenticated user, fallback IP | Yes | USER/STAFF/ADMIN |
+| `GET` | `/api/payments/{id}/status` | 30 | 1 minute | User + payment status path | Yes | Owner, STAFF, ADMIN |
+| `POST` | `/api/payments/{id}/confirm` | 10 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `POST` | `/api/bookings` | 10 | 1 minute | Authenticated user, fallback IP | Yes | USER/STAFF/ADMIN |
+| `POST` | `/api/booking-seats` | 30 | 1 minute | Authenticated user, fallback IP | Yes | USER/STAFF/ADMIN |
+| `POST` | `/api/orders` | 10 | 1 minute | Authenticated user, fallback IP | Yes | USER/STAFF/ADMIN |
+| `POST` | `/api/order-items` | 30 | 1 minute | Authenticated user, fallback IP | Yes | USER/STAFF/ADMIN |
+| `POST` | `/api/products` | 10 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `PUT` | `/api/products/{id}` | 10 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `POST/PUT/PATCH/DELETE` | `/api/locations/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN or stricter route rule |
+| `POST/PUT/PATCH/DELETE` | `/api/theaters/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN or stricter route rule |
+| `POST/PUT/PATCH/DELETE` | `/api/screens/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN or stricter route rule |
+| `POST/PUT/PATCH/DELETE` | `/api/seats/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN or stricter route rule |
+| `POST/PUT/PATCH/DELETE` | `/api/movie-category/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `POST/PUT/PATCH/DELETE` | `/api/movies/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN or stricter route rule |
+| `POST/PUT/PATCH/DELETE` | `/api/shows/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `POST/PUT/PATCH/DELETE` | `/api/users/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | ADMIN |
+| `POST/PUT/PATCH/DELETE` | `/api/product-categories/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `POST/PUT/PATCH/DELETE` | `/api/payment-transactions/**` | 30 | 1 minute | Authenticated user, fallback IP | Yes | STAFF, ADMIN |
+| `GET` | `/api/**` read fallback | 100 | 1 minute | IP | Depends on endpoint | Public/authenticated |
+| Any | `/api/**` fallback | 100 | 1 minute | IP | Depends on endpoint | Depends on endpoint |
 
 When rate-limited, the response includes:
 ```
 429 Too Many Requests
-Retry-After: 60
+Retry-After: <seconds>
+Content-Type: application/json
 ```
+
+The response body uses the normal API error format. Proxy headers such as `X-Forwarded-For` are not trusted for rate-limit keys unless proxy trust is explicitly enabled in backend configuration.
 
 ---
 
@@ -766,6 +794,8 @@ Poll this endpoint to check payment status. For KHQR payments, the server automa
 - Otherwise returns current state
 
 #### `GET /api/payments` / `GET /api/payments/{id}`
+
+Normal users can access only their own payment records. Staff/Admin can access operational payment records.
 #### `PUT /api/payments/{id}` — Cannot update already-PAID payments
 #### `DELETE /api/payments/{id}` — Admin
 
@@ -774,6 +804,8 @@ Poll this endpoint to check payment status. For KHQR payments, the server automa
 ### Payment Transactions `/api/payment-transactions`
 
 #### `GET /api/payment-transactions`
+
+Normal users receive only their own payment transaction records. Staff/Admin can read operational transaction records.
 
 **Response:** `200 OK`
 ```json
@@ -794,9 +826,11 @@ Poll this endpoint to check payment status. For KHQR payments, the server automa
 
 #### `GET /api/payment-transactions/by-payment/{paymentId}`
 
-Get all transaction attempts for a specific payment (useful for KHQR retry history).
+Get all transaction attempts for a specific payment. Normal users can access only transactions for their own payments.
 
-#### `POST /api/payment-transactions` — Authenticated
+Payment transaction records are normally created by backend payment logic. Customer users cannot create manual payment audit records; the write endpoints require Staff/Admin.
+
+#### `POST /api/payment-transactions` - Staff/Admin
 
 | Field | Type | Required |
 |---|---|---|

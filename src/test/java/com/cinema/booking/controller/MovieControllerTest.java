@@ -233,12 +233,11 @@ public class MovieControllerTest {
     }
 
     @Test
-    void protectedEndpoint_WithoutAuth_Returns401_ErrorResponse() throws Exception {
+    void publicReadEndpoint_WithoutAuth_Returns200() throws Exception {
         mockMvc.perform(get("/api/movies/{id}", testMovie.getId()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401))
-                .andExpect(jsonPath("$.error").value("Unauthorized"))
-                .andExpect(jsonPath("$.path").value("/api/movies/" + testMovie.getId()));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(testMovie.getId()))
+                .andExpect(jsonPath("$.title").value(testMovie.getTitle()));
     }
 
     @Test
