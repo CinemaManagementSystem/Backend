@@ -14,7 +14,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -52,11 +51,6 @@ public class UserServiceImpl implements UserService {
 
         if (existing.getRole() == Role.ADMIN && dto.getRole() != Role.ADMIN) {
             throw new IllegalStateException("An ADMIN user cannot be changed to USER or STAFF");
-        }
-
-        boolean protectedRole = existing.getRole() == Role.USER || existing.getRole() == Role.STAFF;
-        if (protectedRole && !Objects.equals(existing.getStatus(), dto.getStatus())) {
-            throw new IllegalStateException("USER and STAFF account statuses cannot be changed");
         }
 
         User updated = userMapper.toEntity(dto);
