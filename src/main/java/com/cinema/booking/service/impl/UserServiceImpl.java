@@ -3,6 +3,7 @@ package com.cinema.booking.service.impl;
 import com.cinema.booking.dto.users.UserRequestDto;
 import com.cinema.booking.dto.users.UserResponseDto;
 import com.cinema.booking.entity.User;
+import com.cinema.booking.enums.Role;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.exception.UserAlreadyExistsException;
 import com.cinema.booking.mapper.UserMapper;
@@ -13,6 +14,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -47,6 +49,15 @@ public class UserServiceImpl implements UserService {
     public UserResponseDto update(Long id, UserRequestDto dto) {
         User existing = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", id));
+
+        if (existing.getRole() == Role.ADMIN && dto.getRole() != Role.ADMIN) {
+            throw new IllegalStateException("An ADMIN user cannot be changed to USER or STAFF");
+        }
+
+        boolean protectedRole = existing.getRole() == Role.USER || existing.getRole() == Role.STAFF;
+        if (protectedRole && !Objects.equals(existing.getStatus(), dto.getStatus())) {
+            throw new IllegalStateException("USER and STAFF account statuses cannot be changed");
+        }
 
         User updated = userMapper.toEntity(dto);
         updated.setId(existing.getId());

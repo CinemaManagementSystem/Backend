@@ -16,6 +16,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UserRequestDto {
 
+    public interface OnCreate {}
+
     @Size(min = 3, max = 50, message = "Username must be between 3 and 50 characters")
     private String username;
 
@@ -27,8 +29,8 @@ public class UserRequestDto {
     @Size(min = 2, max = 100, message = "Name must be between 2 and 100 characters")
     private String name;
 
-    @NotBlank(message = "Password is required")
     @Size(min = 6, message = "Password must be at least 6 characters")
+    @NotBlank(groups = OnCreate.class, message = "Password is required")
     private String password;
 
     @NotNull(message = "Role is required")

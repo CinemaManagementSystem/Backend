@@ -17,4 +17,6 @@ public class UserResponseDto {
     private String username;
     private String email;
     private String role;
+    private String name;
+    private String status;
 }

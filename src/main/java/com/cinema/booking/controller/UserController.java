@@ -7,7 +7,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.validation.annotation.Validated;
 import jakarta.validation.Valid;
+import jakarta.validation.groups.Default;
 import java.util.List;
 
 @RestController
@@ -18,7 +20,8 @@ public class UserController {
     private final UserService userService;
 
     @PostMapping
-    public ResponseEntity<UserResponseDto> create(@Valid @RequestBody UserRequestDto dto) {
+    public ResponseEntity<UserResponseDto> create(
+            @Validated({Default.class, UserRequestDto.OnCreate.class}) @RequestBody UserRequestDto dto) {
         return new ResponseEntity<>(userService.create(dto), HttpStatus.CREATED);
     }
 
