@@ -1,12 +1,17 @@
 package com.cinema.booking.controller;
 
 import com.cinema.booking.dto.auth.LoginRequestDto;
+import com.cinema.booking.dto.auth.LogoutRequestDto;
+import com.cinema.booking.dto.auth.RefreshTokenRequestDto;
 import com.cinema.booking.dto.auth.RegisterRequestDto;
 import com.cinema.booking.entity.User;
 import com.cinema.booking.enums.Role;
+import com.cinema.booking.repository.RefreshTokenRepository;
+import com.cinema.booking.repository.RevokedAccessTokenRepository;
 import com.cinema.booking.repository.UserRepository;
 import com.cinema.booking.security.JwtService;
 import com.cinema.booking.security.ratelimit.RateLimiterService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +42,12 @@ public class AuthControllerTest {
     private UserRepository userRepository;
 
     @Autowired
+    private RefreshTokenRepository refreshTokenRepository;
+
+    @Autowired
+    private RevokedAccessTokenRepository revokedAccessTokenRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -58,6 +69,8 @@ public class AuthControllerTest {
     @BeforeEach
     void setUp() {
         rateLimiterService.reset();
+        refreshTokenRepository.deleteAllInBatch();
+        revokedAccessTokenRepository.deleteAllInBatch();
         userRepository.deleteAllInBatch();
 
         testUser = new User();
@@ -180,6 +193,7 @@ public class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.refreshToken").exists())
                 .andExpect(jsonPath("$.user.username").value("user1"))
                 .andExpect(jsonPath("$.user.email").value("user@example.com"))
                 .andExpect(jsonPath("$.user.role").value("ROLE_USER"));
@@ -197,6 +211,7 @@ public class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.refreshToken").exists())
                 .andExpect(jsonPath("$.user.username").value("user1"))
                 .andExpect(jsonPath("$.user.role").value("ROLE_USER"));
     }
@@ -213,8 +228,88 @@ public class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.refreshToken").exists())
                 .andExpect(jsonPath("$.user.username").value("staff1"))
                 .andExpect(jsonPath("$.user.role").value("ROLE_STAFF"));
+    }
+
+    @Test
+    void refreshToken_Successful_RotatesRefreshToken() throws Exception {
+        LoginRequestDto loginDto = LoginRequestDto.builder()
+                .username("user1")
+                .password("password123")
+                .build();
+
+        JsonNode loginResponse = objectMapper.readTree(mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginDto)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+        String firstRefreshToken = loginResponse.get("refreshToken").asText();
+        RefreshTokenRequestDto refreshDto = RefreshTokenRequestDto.builder()
+                .refreshToken(firstRefreshToken)
+                .build();
+
+        JsonNode refreshResponse = objectMapper.readTree(mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.refreshToken").exists())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+        String secondRefreshToken = refreshResponse.get("refreshToken").asText();
+        org.assertj.core.api.Assertions.assertThat(secondRefreshToken).isNotEqualTo(firstRefreshToken);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshDto)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logout_RevokesRefreshTokenAndAccessToken() throws Exception {
+        LoginRequestDto loginDto = LoginRequestDto.builder()
+                .username("user1")
+                .password("password123")
+                .build();
+
+        JsonNode loginResponse = objectMapper.readTree(mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginDto)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+        String accessToken = loginResponse.get("accessToken").asText();
+        String refreshToken = loginResponse.get("refreshToken").asText();
+        LogoutRequestDto logoutDto = LogoutRequestDto.builder()
+                .refreshToken(refreshToken)
+                .build();
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(logoutDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Logout successful"));
+
+        mockMvc.perform(get("/api/movies")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(RefreshTokenRequestDto.builder()
+                                .refreshToken(refreshToken)
+                                .build())))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -352,8 +447,8 @@ public class AuthControllerTest {
     }
 
     @Test
-    void swaggerEndpoint_PubliclyAccessible() throws Exception {
+    void swaggerEndpoint_RequiresAuthOutsideDevProfile() throws Exception {
         mockMvc.perform(get("/v3/api-docs"))
-                .andExpect(status().isOk());
+                .andExpect(status().isUnauthorized());
     }
 }
