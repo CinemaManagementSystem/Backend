@@ -26,7 +26,9 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final List<String> PUBLIC_AUTH_PATHS = Arrays.asList(
-        "/api/auth/"
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/refresh"
     );
 
     private static final List<String> DEV_PUBLIC_EXACT_PATHS = Arrays.asList(
@@ -50,7 +52,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
         String path = request.getRequestURI();
-        return PUBLIC_AUTH_PATHS.stream().anyMatch(path::startsWith)
+        return PUBLIC_AUTH_PATHS.contains(path)
                 || (isDevProfile() && isDevPublicPath(path));
     }
 

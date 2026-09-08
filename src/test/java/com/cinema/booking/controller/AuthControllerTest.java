@@ -300,7 +300,7 @@ public class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Logout successful"));
 
-        mockMvc.perform(get("/api/movies")
+        mockMvc.perform(get("/api/bookings")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isUnauthorized());
 
@@ -356,7 +356,7 @@ public class AuthControllerTest {
 
     @Test
     void protectedEndpoint_MissingJwt_Returns401() throws Exception {
-        mockMvc.perform(get("/api/movies"))
+        mockMvc.perform(get("/api/bookings"))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -365,7 +365,7 @@ public class AuthControllerTest {
         UserDetails userDetails = userDetailsService.loadUserByUsername(testUser.getUsername());
         String token = jwtService.generateToken(userDetails);
 
-        mockMvc.perform(get("/api/movies")
+        mockMvc.perform(get("/api/bookings")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
     }
@@ -426,8 +426,8 @@ public class AuthControllerTest {
                 .password("password123")
                 .build();
 
-        // 10 allowed requests within 60 seconds
-        for (int i = 0; i < 10; i++) {
+        // 5 allowed login requests within 60 seconds
+        for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/api/auth/login")
                             .header("X-Forwarded-For", "192.168.1.100")
                             .contentType(MediaType.APPLICATION_JSON)
@@ -435,7 +435,7 @@ public class AuthControllerTest {
                     .andExpect(status().isOk());
         }
 
-        // 11th request from same IP must be rate limited with HTTP 429
+        // 6th request for the same IP + username must be rate limited with HTTP 429
         mockMvc.perform(post("/api/auth/login")
                         .header("X-Forwarded-For", "192.168.1.100")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -110,22 +110,34 @@ public class SecurityConfig {
                     auth.requestMatchers(DEV_PUBLIC_PATHS).permitAll();
                 }
 
+                // Public browsing endpoints
+                auth.requestMatchers(HttpMethod.GET,
+                        "/api/movies/**",
+                        "/api/shows/**",
+                        "/api/locations/**",
+                        "/api/theaters/**",
+                        "/api/movie-category/**"
+                ).permitAll();
+
                 // Admin-only management endpoints
                 auth.requestMatchers("/api/users/**").hasRole("ADMIN");
                 auth.requestMatchers(HttpMethod.DELETE, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/locations/**").hasRole("ADMIN");
 
                 // Staff & Admin operations (shows, catalog, screens, products, cash payment confirmation)
                 auth.requestMatchers(HttpMethod.POST, "/api/payments/*/confirm").hasAnyRole("ADMIN", "STAFF");
-                auth.requestMatchers(HttpMethod.POST, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
-                auth.requestMatchers(HttpMethod.PUT, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
-                auth.requestMatchers(HttpMethod.DELETE, "/api/shows/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.POST, "/api/payment-transactions/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.PUT, "/api/payment-transactions/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.DELETE, "/api/payment-transactions/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.POST, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/movie-category/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.PUT, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/movie-category/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.DELETE, "/api/shows/**", "/api/categories/**", "/api/movie-category/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
 
                 // All other endpoints require authentication (User, Staff, Admin)
                 auth.anyRequest().authenticated();
             })
             .authenticationProvider(authenticationProvider())
-            .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(rateLimitingFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }

@@ -19,9 +19,10 @@ import com.cinema.booking.repository.BookingRepository;
 import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
-import com.cinema.booking.repository.UserRepository;
+import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BakongService;
 import com.cinema.booking.service.PaymentService;
+import com.cinema.booking.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,24 +43,25 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final PaymentMapper paymentMapper;
     private final BookingRepository bookingRepository;
-    private final UserRepository userRepository;
     private final OrderRepository orderRepository;
     private final BakongService bakongService;
     private final KhqrConfig khqrConfig;
+    private final AuthorizationService authorizationService;
 
     @Override
     @Transactional
     public PaymentResponseDto create(PaymentRequestDto dto) {
         Payment payment = paymentMapper.toEntity(dto);
 
-        User customer = userRepository.findById(dto.customerId())
-                .orElseThrow(() -> new ResourceNotFoundException("User", dto.customerId()));
+        User customer = authorizationService.resolveCustomerForAuthenticatedRequest(dto.customerId());
         payment.setCustomer(customer);
 
         Booking booking = null;
         if (dto.bookingId() != null) {
             booking = bookingRepository.findById(dto.bookingId())
                     .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId()));
+            authorizationService.requireOwnerOrStaff(booking.getCustomer());
+            ensureSameCustomer(customer, booking.getCustomer(), "Booking");
             payment.setBooking(booking);
         }
 
@@ -67,6 +69,8 @@ public class PaymentServiceImpl implements PaymentService {
         if (dto.orderId() != null) {
             order = orderRepository.findById(dto.orderId())
                     .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId()));
+            authorizationService.requireOwnerOrStaff(order.getCustomer());
+            ensureSameCustomer(customer, order.getCustomer(), "Order");
             payment.setOrder(order);
         }
 
@@ -118,6 +122,13 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public PaymentResponseDto confirmPayment(Long id) {
+        if (SecurityUtil.getCurrentUsername().isPresent()) {
+            authorizationService.requireStaffOrAdmin();
+        }
+        return confirmPaymentInternal(id);
+    }
+
+    private PaymentResponseDto confirmPaymentInternal(Long id) {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
@@ -165,6 +176,7 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponseDto checkStatus(Long id) {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(payment.getCustomer());
 
         if (payment.getStatus() == PaymentStatus.PENDING) {
             LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
@@ -192,7 +204,7 @@ public class PaymentServiceImpl implements PaymentService {
                 BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
                 if (result.paid()) {
                     log.info("Payment #{} verified as PAID via Bakong MD5 check", id);
-                    return confirmPayment(id);
+                    return confirmPaymentInternal(id);
                 }
             }
         }
@@ -205,6 +217,7 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponseDto update(Long id, PaymentRequestDto dto) {
         Payment existing = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(existing.getCustomer());
 
         if (existing.getStatus() == PaymentStatus.PAID) {
             throw new IllegalStateException("Cannot modify a payment that has already succeeded");
@@ -214,31 +227,43 @@ public class PaymentServiceImpl implements PaymentService {
         existing.setPaymentMethod(dto.paymentMethod());
 
         if (dto.customerId() != null) {
-            existing.setCustomer(userRepository.findById(dto.customerId())
-                    .orElseThrow(() -> new ResourceNotFoundException("User", dto.customerId())));
+            existing.setCustomer(authorizationService.resolveCustomerForAuthenticatedRequest(dto.customerId()));
         }
         if (dto.bookingId() != null) {
-            existing.setBooking(bookingRepository.findById(dto.bookingId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId())));
+            Booking booking = bookingRepository.findById(dto.bookingId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId()));
+            authorizationService.requireOwnerOrStaff(booking.getCustomer());
+            ensureSameCustomer(existing.getCustomer(), booking.getCustomer(), "Booking");
+            existing.setBooking(booking);
         }
         if (dto.orderId() != null) {
-            existing.setOrder(orderRepository.findById(dto.orderId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId())));
+            Order order = orderRepository.findById(dto.orderId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId()));
+            authorizationService.requireOwnerOrStaff(order.getCustomer());
+            ensureSameCustomer(existing.getCustomer(), order.getCustomer(), "Order");
+            existing.setOrder(order);
         }
         existing = paymentRepository.save(existing);
         return paymentMapper.toResponseDto(existing);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public PaymentResponseDto getById(Long id) {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(payment.getCustomer());
         return paymentMapper.toResponseDto(payment);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<PaymentResponseDto> getAll() {
-        return paymentRepository.findAll().stream()
+        User currentUser = authorizationService.getCurrentUser();
+        List<Payment> payments = authorizationService.isStaffOrAdmin(currentUser)
+                ? paymentRepository.findAll()
+                : paymentRepository.findByCustomerId(currentUser.getId());
+        return payments.stream()
                 .map(paymentMapper::toResponseDto)
                 .collect(Collectors.toList());
     }
@@ -246,9 +271,18 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public void delete(Long id) {
-        if (!paymentRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Payment", id);
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(payment.getCustomer());
+        paymentRepository.delete(payment);
+    }
+
+    private void ensureSameCustomer(User paymentCustomer, User linkedCustomer, String resourceName) {
+        if (paymentCustomer == null
+                || linkedCustomer == null
+                || paymentCustomer.getId() == null
+                || !paymentCustomer.getId().equals(linkedCustomer.getId())) {
+            throw new IllegalArgumentException(resourceName + " does not belong to the payment customer");
         }
-        paymentRepository.deleteById(id);
     }
 }
