@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -42,10 +43,14 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private static final String[] PUBLIC_PATHS = {
+    private static final String[] PUBLIC_AUTH_PATHS = {
+        "/api/auth/**"
+    };
+
+    private static final String[] DEV_PUBLIC_PATHS = {
         "/",
         "/index.html",
-        "/api/auth/**",
+        "/favicon.ico",
         "/swagger-ui/**",
         "/swagger-ui.html",
         "/v3/api-docs/**",
@@ -57,6 +62,7 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final RateLimitingFilter rateLimitingFilter;
     private final UserDetailsService userDetailsService;
+    private final Environment environment;
 
     @Value("${cors.allowed-origins:http://localhost:3000}")
     private String allowedOrigins;
@@ -95,28 +101,38 @@ public class SecurityConfig {
                     mapper.writeValue(response.getWriter(), errorResponse);
                 })
             )
-            .authorizeHttpRequests(auth -> auth
-                // Public endpoints (auth + swagger)
-                .requestMatchers(PUBLIC_PATHS).permitAll()
+            .authorizeHttpRequests(auth -> {
+                // Authentication endpoints stay public so users can register and log in.
+                auth.requestMatchers(PUBLIC_AUTH_PATHS).permitAll();
+
+                // Local test page and API docs are public only for development.
+                if (isDevProfile()) {
+                    auth.requestMatchers(DEV_PUBLIC_PATHS).permitAll();
+                }
 
                 // Admin-only management endpoints
-                .requestMatchers("/api/users/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/locations/**").hasRole("ADMIN")
+                auth.requestMatchers("/api/users/**").hasRole("ADMIN");
+                auth.requestMatchers(HttpMethod.DELETE, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/locations/**").hasRole("ADMIN");
 
                 // Staff & Admin operations (shows, catalog, screens, products, cash payment confirmation)
-                .requestMatchers(HttpMethod.POST, "/api/payments/*/confirm").hasAnyRole("ADMIN", "STAFF")
-                .requestMatchers(HttpMethod.POST, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF")
-                .requestMatchers(HttpMethod.PUT, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF")
-                .requestMatchers(HttpMethod.DELETE, "/api/shows/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF")
+                auth.requestMatchers(HttpMethod.POST, "/api/payments/*/confirm").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.POST, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.PUT, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/shows/**", "/api/locations/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
+                auth.requestMatchers(HttpMethod.DELETE, "/api/shows/**", "/api/categories/**", "/api/product-categories/**", "/api/products/**").hasAnyRole("ADMIN", "STAFF");
 
                 // All other endpoints require authentication (User, Staff, Admin)
-                .anyRequest().authenticated()
-            )
+                auth.anyRequest().authenticated();
+            })
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    private boolean isDevProfile() {
+        return Arrays.stream(environment.getActiveProfiles())
+                .anyMatch("dev"::equalsIgnoreCase);
     }
 
     @Bean

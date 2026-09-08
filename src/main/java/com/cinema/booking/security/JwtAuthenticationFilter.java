@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.env.Environment;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -24,8 +25,17 @@ import java.util.List;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private static final List<String> PUBLIC_PATHS = Arrays.asList(
-        "/api/auth/",
+    private static final List<String> PUBLIC_AUTH_PATHS = Arrays.asList(
+        "/api/auth/"
+    );
+
+    private static final List<String> DEV_PUBLIC_EXACT_PATHS = Arrays.asList(
+        "/",
+        "/index.html",
+        "/favicon.ico"
+    );
+
+    private static final List<String> DEV_PUBLIC_PREFIX_PATHS = Arrays.asList(
         "/swagger-ui",
         "/v3/api-docs",
         "/swagger-resources",
@@ -34,11 +44,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
+    private final Environment environment;
 
     @Override
     protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
         String path = request.getRequestURI();
-        return PUBLIC_PATHS.stream().anyMatch(path::startsWith);
+        return PUBLIC_AUTH_PATHS.stream().anyMatch(path::startsWith)
+                || (isDevProfile() && isDevPublicPath(path));
+    }
+
+    private boolean isDevProfile() {
+        return Arrays.stream(environment.getActiveProfiles())
+                .anyMatch("dev"::equalsIgnoreCase);
+    }
+
+    private boolean isDevPublicPath(String path) {
+        return DEV_PUBLIC_EXACT_PATHS.contains(path)
+                || DEV_PUBLIC_PREFIX_PATHS.stream().anyMatch(path::startsWith);
     }
 
     @Override
