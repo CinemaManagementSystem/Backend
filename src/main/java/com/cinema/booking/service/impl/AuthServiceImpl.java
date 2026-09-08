@@ -2,6 +2,9 @@ package com.cinema.booking.service.impl;
 
 import com.cinema.booking.dto.auth.AuthResponseDto;
 import com.cinema.booking.dto.auth.LoginRequestDto;
+import com.cinema.booking.dto.auth.LogoutRequestDto;
+import com.cinema.booking.dto.auth.LogoutResponseDto;
+import com.cinema.booking.dto.auth.RefreshTokenRequestDto;
 import com.cinema.booking.dto.auth.RegisterRequestDto;
 import com.cinema.booking.dto.auth.RegisterResponseDto;
 import com.cinema.booking.dto.users.UserResponseDto;
@@ -9,6 +12,7 @@ import com.cinema.booking.entity.User;
 import com.cinema.booking.enums.Role;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.exception.UserAlreadyExistsException;
+import com.cinema.booking.security.AuthTokenService;
 import com.cinema.booking.repository.UserRepository;
 import com.cinema.booking.security.JwtService;
 import com.cinema.booking.service.AuthService;
@@ -21,6 +25,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -29,10 +34,12 @@ public class AuthServiceImpl implements AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final AuthTokenService authTokenService;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
 
     @Override
+    @Transactional
     public RegisterResponseDto register(RegisterRequestDto dto) {
         if (userRepository.existsByUsername(dto.getUsername())) {
             throw new UserAlreadyExistsException("Username already exists: " + dto.getUsername());
@@ -65,6 +72,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Transactional
     public AuthResponseDto login(LoginRequestDto dto) {
         String principal = dto.getPrincipal();
         if (principal.isBlank()) {
@@ -87,20 +95,54 @@ public class AuthServiceImpl implements AuthService {
             throw new DisabledException("Account is disabled or inactive");
         }
 
-        String jwtToken = jwtService.generateToken(userDetails);
+        return buildAuthResponse(userDetails, user, authTokenService.createRefreshToken(user));
+    }
 
-        UserResponseDto userDto = UserResponseDto.builder()
+    @Override
+    @Transactional
+    public AuthResponseDto refresh(RefreshTokenRequestDto dto) {
+        AuthTokenService.TokenRefreshResult result = authTokenService.rotateRefreshToken(dto.getRefreshToken());
+        User user = result.user();
+
+        if (user.getStatus() != null && !"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+            throw new DisabledException("Account is disabled or inactive");
+        }
+
+        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername() != null ? user.getUsername() : user.getEmail());
+        return buildAuthResponse(userDetails, user, result.refreshToken());
+    }
+
+    @Override
+    @Transactional
+    public LogoutResponseDto logout(String authorizationHeader, LogoutRequestDto dto) {
+        authTokenService.revokeAccessToken(authorizationHeader);
+        if (dto != null) {
+            authTokenService.revokeRefreshToken(dto.getRefreshToken());
+        }
+
+        return LogoutResponseDto.builder()
+                .message("Logout successful")
+                .build();
+    }
+
+    private AuthResponseDto buildAuthResponse(UserDetails userDetails, User user, String refreshToken) {
+        String jwtToken = jwtService.generateToken(userDetails);
+        UserResponseDto userDto = buildUserResponse(user);
+        return AuthResponseDto.builder()
+                .accessToken(jwtToken)
+                .refreshToken(refreshToken)
+                .tokenType("Bearer")
+                .expiresIn(jwtService.getExpirationTime())
+                .user(userDto)
+                .build();
+    }
+
+    private UserResponseDto buildUserResponse(User user) {
+        return UserResponseDto.builder()
                 .id(user.getId())
                 .username(user.getUsername() != null ? user.getUsername() : user.getEmail())
                 .email(user.getEmail())
                 .role("ROLE_" + user.getRole().name())
-                .build();
-
-        return AuthResponseDto.builder()
-                .accessToken(jwtToken)
-                .tokenType("Bearer")
-                .expiresIn(jwtService.getExpirationTime())
-                .user(userDto)
                 .build();
     }
 }
