@@ -22,7 +22,6 @@ import com.cinema.booking.repository.PaymentTransactionRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BakongService;
 import com.cinema.booking.service.PaymentService;
-import com.cinema.booking.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -122,9 +121,13 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public PaymentResponseDto confirmPayment(Long id) {
-        if (SecurityUtil.getCurrentUsername().isPresent()) {
-            authorizationService.requireStaffOrAdmin();
-        }
+        authorizationService.requireStaffOrAdmin();
+        return confirmPaymentInternal(id);
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto confirmPaymentFromSystem(Long id) {
         return confirmPaymentInternal(id);
     }
 

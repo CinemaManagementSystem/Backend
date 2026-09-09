@@ -11,6 +11,7 @@ public interface PaymentService {
     PaymentResponseDto getById(Long id);
     List<PaymentResponseDto> getAll();
     PaymentResponseDto confirmPayment(Long id);
+    PaymentResponseDto confirmPaymentFromSystem(Long id);
     PaymentResponseDto checkStatus(Long id);
     void delete(Long id);
 }

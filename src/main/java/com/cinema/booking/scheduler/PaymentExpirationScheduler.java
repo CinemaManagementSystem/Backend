@@ -53,7 +53,7 @@ public class PaymentExpirationScheduler {
             BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
             if (result.paid()) {
                 log.info("Pending KHQR payment #{} confirmed by scheduled Bakong polling", payment.getId());
-                paymentService.confirmPayment(payment.getId());
+                paymentService.confirmPaymentFromSystem(payment.getId());
             }
         }
     }
