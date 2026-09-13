@@ -2,6 +2,8 @@ package com.cinema.booking.config;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,6 +21,7 @@ import com.cinema.booking.entity.Product;
 import com.cinema.booking.entity.ProductCategory;
 import com.cinema.booking.entity.Screen;
 import com.cinema.booking.entity.Seat;
+import com.cinema.booking.entity.Show;
 import com.cinema.booking.entity.Theater;
 import com.cinema.booking.entity.User;
 import com.cinema.booking.enums.Role;
@@ -29,6 +32,7 @@ import com.cinema.booking.repository.ProductCategoryRepository;
 import com.cinema.booking.repository.ProductRepository;
 import com.cinema.booking.repository.ScreenRepository;
 import com.cinema.booking.repository.SeatRepository;
+import com.cinema.booking.repository.ShowRepository;
 import com.cinema.booking.repository.TheaterRepository;
 import com.cinema.booking.repository.UserRepository;
 
@@ -47,6 +51,7 @@ public class DatabaseSeeder implements CommandLineRunner {
     private final TheaterRepository theaterRepository;
     private final ScreenRepository screenRepository;
     private final SeatRepository seatRepository;
+    private final ShowRepository showRepository;
     private final MovieCategoryRepository movieCategoryRepository;
     private final MovieRepository movieRepository;
     private final ProductCategoryRepository productCategoryRepository;
@@ -188,13 +193,19 @@ public class DatabaseSeeder implements CommandLineRunner {
                 sciFi
         );
 
-        // 9. Product Categories
+        // 9. Showtimes (linked to Movie & Screen)
+        LocalDate showDate = LocalDate.now().plusDays(1);
+        seedShowIfNotExists("Inception", screen1, showDate.atTime(LocalTime.of(18, 0)), BigDecimal.valueOf(6.00));
+        seedShowIfNotExists("Interstellar", screen2, showDate.atTime(LocalTime.of(19, 0)), BigDecimal.valueOf(9.00));
+        seedShowIfNotExists("Avengers: Endgame", screen3, showDate.atTime(LocalTime.of(20, 0)), BigDecimal.valueOf(6.00));
+
+        // 10. Product Categories
         ProductCategory popcornCat = seedProductCategoryIfNotExists("Popcorn", "Freshly popped gourmet popcorn in sweet, salted, or cheese flavors", true);
         ProductCategory beveragesCat = seedProductCategoryIfNotExists("Beverages", "Refreshing soft drinks, mineral water, and juices", true);
         ProductCategory snacksCat = seedProductCategoryIfNotExists("Snacks", "Delicious movie snacks including nachos, hot dogs, and candy", true);
         ProductCategory combosCat = seedProductCategoryIfNotExists("Combos", "Value combos combining popcorn and beverages for the best experience", true);
 
-        // 10. Products (linked to ProductCategory)
+        // 11. Products (linked to ProductCategory)
         seedProductIfNotExists("Caramel Popcorn (L)", BigDecimal.valueOf(4.50), "https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=400&q=80", true, 100, popcornCat);
         seedProductIfNotExists("Salted Popcorn (M)", BigDecimal.valueOf(3.50), "https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=400&q=80", true, 100, popcornCat);
         seedProductIfNotExists("Coca-Cola 500ml", BigDecimal.valueOf(2.00), "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=400&q=80", true, 200, beveragesCat);
@@ -212,18 +223,28 @@ public class DatabaseSeeder implements CommandLineRunner {
     }
 
     private User seedUserIfNotExists(String username, String email, String name, String rawPassword, Role role) {
-        return userRepository.findByUsername(username).orElseGet(() -> {
-            User user = new User();
-            user.setUsername(username);
-            user.setEmail(email);
-            user.setName(name);
+        User user = userRepository.findByUsername(username)
+                .or(() -> userRepository.findByEmail(email))
+                .orElseGet(User::new);
+        boolean created = user.getId() == null;
+
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setName(name);
+        user.setRole(role);
+        user.setStatus("ACTIVE");
+
+        // Development seed accounts must remain usable after an existing local
+        // database is reused with Docker. Reconcile the password hash as well as
+        // the role/status so stale accounts cannot produce an unusable dashboard.
+        if (created || user.getPassword() == null || !passwordEncoder.matches(rawPassword, user.getPassword())) {
             user.setPassword(passwordEncoder.encode(rawPassword));
-            user.setRole(role);
-            user.setStatus("ACTIVE");
-            User saved = userRepository.save(user);
-            log.info("Default {} user created: username='{}', email='{}'", role, username, email);
-            return saved;
-        });
+        }
+
+        User saved = userRepository.save(user);
+        log.info("Default {} user {}: username='{}', email='{}'",
+                role, created ? "created" : "reconciled", username, email);
+        return saved;
     }
 
 
@@ -343,6 +364,27 @@ public class DatabaseSeeder implements CommandLineRunner {
             log.info("Default product category created: name='{}'", name);
             return saved;
         });
+    }
+
+    private void seedShowIfNotExists(String movieTitle, Screen screen, LocalDateTime startTime,
+                                     BigDecimal ticketPrice) {
+        Movie movie = movieRepository.findByTitle(movieTitle)
+                .orElseThrow(() -> new IllegalStateException("Seed movie not found: " + movieTitle));
+
+        if (showRepository.existsByMovieIdAndScreenIdAndStartTime(movie.getId(), screen.getId(), startTime)) {
+            return;
+        }
+
+        Show show = new Show();
+        show.setMovie(movie);
+        show.setScreen(screen);
+        show.setStartTime(startTime);
+        show.setEndTime(startTime.plusMinutes(movie.getDurationMinutes()));
+        show.setTicketPrice(ticketPrice);
+        show.setStatus("ACTIVE");
+        showRepository.save(show);
+        log.info("Default showtime created: movie='{}', screen='{}', startsAt={}",
+                movieTitle, screen.getName(), startTime);
     }
 
     private void seedProductIfNotExists(String name, BigDecimal price, String imageUrl, boolean isAvailable,

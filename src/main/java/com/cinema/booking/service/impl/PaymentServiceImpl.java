@@ -6,6 +6,7 @@ import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
 import com.cinema.booking.entity.Booking;
+import com.cinema.booking.entity.BookingSeat;
 import com.cinema.booking.entity.Order;
 import com.cinema.booking.entity.Payment;
 import com.cinema.booking.entity.PaymentTransaction;
@@ -16,6 +17,7 @@ import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.mapper.PaymentMapper;
 import com.cinema.booking.repository.BookingRepository;
+import com.cinema.booking.repository.BookingSeatRepository;
 import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
@@ -42,6 +44,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final PaymentMapper paymentMapper;
     private final BookingRepository bookingRepository;
+    private final BookingSeatRepository bookingSeatRepository;
     private final OrderRepository orderRepository;
     private final BakongService bakongService;
     private final KhqrConfig khqrConfig;
@@ -132,26 +135,24 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private PaymentResponseDto confirmPaymentInternal(Long id) {
-        Payment payment = paymentRepository.findById(id)
+        Payment payment = paymentRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
-        if (payment.getStatus() == PaymentStatus.PAID) {
-            // Idempotency guard: confirming twice (e.g. staff click + Bakong poll racing)
-            // must not create a duplicate PAID transaction log.
-            return paymentMapper.toResponseDto(payment);
+        payment.setStatus(PaymentStatus.PAID);
+        if (payment.getPaidAt() == null) {
+            payment.setPaidAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
         }
 
-        payment.setStatus(PaymentStatus.PAID);
-        payment.setPaidAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
-
-        // Automatically update related Booking to CONFIRMED
         if (payment.getBooking() != null) {
             Booking booking = payment.getBooking();
             booking.transitionTo(BookingStatus.CONFIRMED);
             bookingRepository.save(booking);
+
+            List<BookingSeat> bookingSeats = bookingSeatRepository.findByBookingId(booking.getId());
+            bookingSeats.forEach(bookingSeat -> bookingSeat.setStatus("CONFIRMED"));
+            bookingSeatRepository.saveAll(bookingSeats);
         }
 
-        // Automatically update related Order to PAID
         if (payment.getOrder() != null) {
             Order order = payment.getOrder();
             order.setStatus("PAID");
@@ -160,15 +161,27 @@ public class PaymentServiceImpl implements PaymentService {
 
         payment = paymentRepository.save(payment);
 
-        // Record successful transaction log
-        PaymentTransaction transaction = new PaymentTransaction();
-        transaction.setPayment(payment);
-        transaction.setBooking(payment.getBooking());
-        transaction.setOrder(payment.getOrder());
-        transaction.setAmount(payment.getAmount());
-        transaction.setTransactionType(payment.getPaymentMethod());
+        String reference = payment.getTransactionId();
+        List<PaymentTransaction> transactions = reference == null
+                ? List.of()
+                : paymentTransactionRepository.findByPaymentIdAndReferenceOrderByIdAsc(id, reference);
+        PaymentTransaction transaction = transactions.isEmpty()
+                ? paymentTransactionRepository.findByPaymentIdAndStatusOrderByIdAsc(id, PaymentStatus.PENDING)
+                .stream()
+                .findFirst()
+                .orElse(null)
+                : transactions.get(0);
+
+        if (transaction == null) {
+            transaction = new PaymentTransaction();
+            transaction.setPayment(payment);
+            transaction.setBooking(payment.getBooking());
+            transaction.setOrder(payment.getOrder());
+            transaction.setAmount(payment.getAmount());
+            transaction.setTransactionType(payment.getPaymentMethod());
+            transaction.setReference(reference != null ? reference : "CONFIRM-" + id);
+        }
         transaction.setStatus(PaymentStatus.PAID);
-        transaction.setReference(payment.getTransactionId() != null ? payment.getTransactionId() : "CONFIRM-" + System.currentTimeMillis());
         paymentTransactionRepository.save(transaction);
 
         return paymentMapper.toResponseDto(payment);
