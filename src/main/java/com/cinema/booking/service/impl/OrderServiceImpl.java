@@ -11,6 +11,7 @@ import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.BookingRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.OrderService;
+import com.cinema.booking.service.BookingTotalService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderMapper orderMapper;
     private final BookingRepository bookingRepository;
     private final AuthorizationService authorizationService;
+    private final BookingTotalService bookingTotalService;
 
     @Override
     @Transactional
@@ -39,6 +41,9 @@ public class OrderServiceImpl implements OrderService {
         User customer = authorizationService.resolveCustomerForAuthenticatedRequest(dto.getCustomerId());
         order.setCustomer(customer);
         order = orderRepository.save(order);
+        if (order.getBooking() != null) {
+            bookingTotalService.recalculate(order.getBooking());
+        }
         return orderMapper.toResponseDto(order);
     }
 
@@ -48,6 +53,7 @@ public class OrderServiceImpl implements OrderService {
         Order existing = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", id));
         authorizationService.requireOwnerOrStaff(existing.getCustomer());
+        Booking previousBooking = existing.getBooking();
 
         Order updated = orderMapper.toEntity(dto);
         updated.setId(existing.getId());
@@ -59,6 +65,13 @@ public class OrderServiceImpl implements OrderService {
         }
         updated.setCustomer(authorizationService.resolveCustomerForAuthenticatedRequest(dto.getCustomerId()));
         updated = orderRepository.save(updated);
+        if (previousBooking != null) {
+            bookingTotalService.recalculate(previousBooking);
+        }
+        if (updated.getBooking() != null && (previousBooking == null
+                || !previousBooking.getId().equals(updated.getBooking().getId()))) {
+            bookingTotalService.recalculate(updated.getBooking());
+        }
         return orderMapper.toResponseDto(updated);
     }
 
@@ -89,6 +102,10 @@ public class OrderServiceImpl implements OrderService {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", id));
         authorizationService.requireOwnerOrStaff(order.getCustomer());
+        Booking booking = order.getBooking();
         orderRepository.delete(order);
+        if (booking != null) {
+            bookingTotalService.recalculate(booking);
+        }
     }
 }

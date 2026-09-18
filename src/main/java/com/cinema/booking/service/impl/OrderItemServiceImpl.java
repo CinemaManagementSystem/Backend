@@ -12,10 +12,12 @@ import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.ProductRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.OrderItemService;
+import com.cinema.booking.service.BookingTotalService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
+import java.math.BigDecimal;
 import java.util.stream.Collectors;
 
 @Service
@@ -27,6 +29,7 @@ public class OrderItemServiceImpl implements OrderItemService {
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final AuthorizationService authorizationService;
+    private final BookingTotalService bookingTotalService;
 
     @Override
     @Transactional
@@ -39,7 +42,9 @@ public class OrderItemServiceImpl implements OrderItemService {
         Product product = productRepository.findById(dto.getProductId())
                 .orElseThrow(() -> new ResourceNotFoundException("Product", dto.getProductId()));
         orderItem.setProduct(product);
+        snapshotPrice(orderItem, product);
         orderItem = orderItemRepository.save(orderItem);
+        refreshTotals(order);
         return orderItemMapper.toResponseDto(orderItem);
     }
 
@@ -49,6 +54,7 @@ public class OrderItemServiceImpl implements OrderItemService {
         OrderItem existing = orderItemRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OrderItem", id));
         authorizationService.requireOwnerOrStaff(existing.getOrder().getCustomer());
+        Order previousOrder = existing.getOrder();
         Order order = orderRepository.findById(dto.getOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Order", dto.getOrderId()));
         authorizationService.requireOwnerOrStaff(order.getCustomer());
@@ -58,7 +64,16 @@ public class OrderItemServiceImpl implements OrderItemService {
         updated.setOrder(order);
         updated.setProduct(productRepository.findById(dto.getProductId())
                 .orElseThrow(() -> new ResourceNotFoundException("Product", dto.getProductId())));
+        if (existing.getProduct() != null && existing.getProduct().getId().equals(updated.getProduct().getId())) {
+            updated.setUnitPrice(existing.getUnitPrice());
+        } else {
+            snapshotPrice(updated, updated.getProduct());
+        }
         updated = orderItemRepository.save(updated);
+        refreshTotals(previousOrder);
+        if (!previousOrder.getId().equals(order.getId())) {
+            refreshTotals(order);
+        }
         return orderItemMapper.toResponseDto(updated);
     }
 
@@ -89,6 +104,26 @@ public class OrderItemServiceImpl implements OrderItemService {
         OrderItem orderItem = orderItemRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OrderItem", id));
         authorizationService.requireOwnerOrStaff(orderItem.getOrder().getCustomer());
+        Order order = orderItem.getOrder();
         orderItemRepository.delete(orderItem);
+        refreshTotals(order);
+    }
+
+    private void refreshTotals(Order order) {
+        if (order.getBooking() != null) {
+            bookingTotalService.recalculate(order.getBooking());
+        } else {
+            bookingTotalService.recalculateOrder(order);
+        }
+    }
+
+    private void snapshotPrice(OrderItem orderItem, Product product) {
+        BigDecimal price = product.getPrice();
+        int quantity = orderItem.getQuantity() != null ? orderItem.getQuantity() : 0;
+        if (price == null || quantity < 1) {
+            throw new IllegalArgumentException("Product price and quantity must be valid");
+        }
+        orderItem.setUnitPrice(price);
+        orderItem.setSubtotal(price.multiply(BigDecimal.valueOf(quantity)));
     }
 }

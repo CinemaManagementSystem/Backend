@@ -21,17 +21,22 @@ import com.cinema.booking.repository.BookingSeatRepository;
 import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
+import com.cinema.booking.repository.SeatRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BakongService;
+import com.cinema.booking.service.BookingTotalService;
+import com.cinema.booking.service.BookingService;
 import com.cinema.booking.service.PaymentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -45,26 +50,28 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentMapper paymentMapper;
     private final BookingRepository bookingRepository;
     private final BookingSeatRepository bookingSeatRepository;
+    private final SeatRepository seatRepository;
     private final OrderRepository orderRepository;
     private final BakongService bakongService;
+    private final BookingTotalService bookingTotalService;
+    private final BookingService bookingService;
     private final KhqrConfig khqrConfig;
     private final AuthorizationService authorizationService;
 
     @Override
     @Transactional
     public PaymentResponseDto create(PaymentRequestDto dto) {
-        Payment payment = paymentMapper.toEntity(dto);
-
         User customer = authorizationService.resolveCustomerForAuthenticatedRequest(dto.customerId());
-        payment.setCustomer(customer);
 
         Booking booking = null;
         if (dto.bookingId() != null) {
-            booking = bookingRepository.findById(dto.bookingId())
+            booking = bookingRepository.findByIdForUpdate(dto.bookingId())
                     .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId()));
             authorizationService.requireOwnerOrStaff(booking.getCustomer());
             ensureSameCustomer(customer, booking.getCustomer(), "Booking");
-            payment.setBooking(booking);
+            if (booking.getStatus() != BookingStatus.PENDING) {
+                throw new IllegalStateException("Only pending bookings can be paid");
+            }
         }
 
         Order order = null;
@@ -73,10 +80,59 @@ public class PaymentServiceImpl implements PaymentService {
                     .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId()));
             authorizationService.requireOwnerOrStaff(order.getCustomer());
             ensureSameCustomer(customer, order.getCustomer(), "Order");
-            payment.setOrder(order);
+            if (booking != null && (order.getBooking() == null
+                    || !booking.getId().equals(order.getBooking().getId()))) {
+                throw new IllegalArgumentException("Order must belong to the same booking as the payment");
+            }
+            if (booking == null && order.getBooking() != null) {
+                throw new IllegalArgumentException("A booking-linked order must be paid with its booking");
+            }
         }
 
         PaymentMethod method = dto.paymentMethod();
+        BigDecimal expectedAmount = BigDecimal.ZERO;
+        if (booking != null) {
+            expectedAmount = bookingTotalService.recalculate(booking);
+            if (expectedAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Booking total must be greater than zero");
+            }
+            ensureBookingHoldActive(booking);
+        }
+        if (order != null) {
+            expectedAmount = expectedAmount.add(bookingTotalService.recalculateOrder(order));
+        }
+        if (booking != null || order != null) {
+            if (dto.amount().compareTo(expectedAmount) != 0) {
+                throw new IllegalArgumentException("Payment amount must match the current booking/order total: " + expectedAmount);
+            }
+        }
+
+        BigDecimal amount = dto.amount();
+        Payment payment = null;
+        if (booking != null) {
+            List<Payment> pendingPayments = paymentRepository.findByBookingIdAndStatusOrderByIdAsc(
+                    booking.getId(), PaymentStatus.PENDING);
+            if (!pendingPayments.isEmpty()) {
+                payment = pendingPayments.get(0);
+                if (payment.getPaymentMethod() != null && payment.getPaymentMethod() != method) {
+                    throw new IllegalArgumentException("Payment method cannot change while retrying a pending payment");
+                }
+                markPendingAttemptFailed(payment);
+                for (Payment duplicate : pendingPayments.subList(1, pendingPayments.size())) {
+                    duplicate.setStatus(PaymentStatus.FAILED);
+                    paymentRepository.save(duplicate);
+                    markPendingAttemptFailed(duplicate);
+                }
+            }
+        }
+        if (payment == null) {
+            payment = paymentMapper.toEntity(dto);
+        }
+
+        payment.setCustomer(customer);
+        payment.setBooking(booking);
+        payment.setOrder(order);
+        payment.setAmount(amount);
         payment.setPaymentMethod(method);
         payment.setStatus(PaymentStatus.PENDING);
 
@@ -86,14 +142,13 @@ public class PaymentServiceImpl implements PaymentService {
             // Generate standard EMVCo/NBC KHQR payload and MD5 hash
             payment.setTransactionId(txId);
             String currency = khqrConfig.getCurrency() != null ? khqrConfig.getCurrency() : "USD";
-            KhqrPayload khqr = bakongService.generateDynamicKhqr(
-                    dto.amount(),
-                    currency,
-                    txId,
-                    "Cinema Booking",
-                    dto.accountId(),
-                    dto.merchantName()
-            );
+            KhqrPayload khqr = booking != null && booking.getExpiresAt() != null
+                    ? bakongService.generateDynamicKhqr(
+                            amount, currency, txId, "Cinema Booking",
+                            null, null, booking.getExpiresAt())
+                    : bakongService.generateDynamicKhqr(
+                            amount, currency, txId, "Cinema Booking",
+                            null, null);
             payment.setKhqrString(khqr.khqrString());
             payment.setMd5Hash(khqr.md5Hash());
             payment.setExpiresAt(khqr.expiresAt());
@@ -112,7 +167,7 @@ public class PaymentServiceImpl implements PaymentService {
         transaction.setPayment(payment);
         transaction.setBooking(booking);
         transaction.setOrder(order);
-        transaction.setAmount(dto.amount());
+        transaction.setAmount(amount);
         transaction.setTransactionType(method);
         transaction.setStatus(PaymentStatus.PENDING);
         transaction.setReference(txId);
@@ -125,6 +180,11 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public PaymentResponseDto confirmPayment(Long id) {
         authorizationService.requireStaffOrAdmin();
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        if (payment.getPaymentMethod() != PaymentMethod.CASH) {
+            throw new IllegalStateException("KHQR payments must be confirmed by Bakong verification");
+        }
         return confirmPaymentInternal(id);
     }
 
@@ -135,20 +195,63 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private PaymentResponseDto confirmPaymentInternal(Long id) {
+        return confirmPaymentInternal(id, false);
+    }
+
+    /**
+     * The only database operation that turns a verified payment into a
+     * confirmed booking. A late Bakong result may recover a FAILED payment,
+     * but only after the exact payment MD5 was verified and the seats are
+     * locked and still available.
+     */
+    private PaymentResponseDto confirmPaymentInternal(Long id, boolean allowLateRecovery) {
+        Payment snapshot = paymentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        Booking lockedBooking = snapshot.getBooking() == null ? null
+                : bookingRepository.findByIdForUpdate(snapshot.getBooking().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking", snapshot.getBooking().getId()));
         Payment payment = paymentRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+
+        if (payment.getStatus() == PaymentStatus.PAID) {
+            return paymentMapper.toResponseDto(payment);
+        }
+
+        boolean lateRecovery = allowLateRecovery
+                && (payment.getStatus() == PaymentStatus.FAILED || payment.getStatus() == PaymentStatus.EXPIRED);
+        if (payment.getStatus() != PaymentStatus.PENDING && !lateRecovery) {
+            return paymentMapper.toResponseDto(payment);
+        }
+
+        Booking booking = lockedBooking != null ? lockedBooking : payment.getBooking();
+        List<BookingSeat> bookingSeats = List.of();
+        if (booking != null) {
+            if (booking.getStatus() == BookingStatus.EXPIRED && !lateRecovery) {
+                throw new IllegalStateException("An expired booking requires late Bakong recovery");
+            }
+            if (booking.getStatus() == BookingStatus.CANCELLED
+                    || (booking.getStatus() != BookingStatus.PENDING
+                    && booking.getStatus() != BookingStatus.EXPIRED
+                    && booking.getStatus() != BookingStatus.CONFIRMED)) {
+                throw new IllegalStateException("A payment cannot confirm this booking");
+            }
+            if (lateRecovery && booking.getStatus() == BookingStatus.EXPIRED) {
+                log.warn("Attempting late recovery for expired booking #{}", booking.getId());
+            }
+            bookingSeats = bookingSeatRepository.findByBookingIdForUpdate(booking.getId());
+            ensureSeatsCanBeConfirmed(booking, bookingSeats);
+        }
 
         payment.setStatus(PaymentStatus.PAID);
         if (payment.getPaidAt() == null) {
             payment.setPaidAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
         }
 
-        if (payment.getBooking() != null) {
-            Booking booking = payment.getBooking();
+        if (booking != null) {
+            payment.setBooking(booking);
             booking.transitionTo(BookingStatus.CONFIRMED);
             bookingRepository.save(booking);
 
-            List<BookingSeat> bookingSeats = bookingSeatRepository.findByBookingId(booking.getId());
             bookingSeats.forEach(bookingSeat -> bookingSeat.setStatus("CONFIRMED"));
             bookingSeatRepository.saveAll(bookingSeats);
         }
@@ -161,12 +264,134 @@ public class PaymentServiceImpl implements PaymentService {
 
         payment = paymentRepository.save(payment);
 
+        PaymentTransaction transaction = findOrCreateTransaction(payment);
+        transaction.setStatus(PaymentStatus.PAID);
+        paymentTransactionRepository.save(transaction);
+
+        log.info("Payment confirmation persisted: paymentId={}, bookingId={}, transactionId={}, md5={}, paymentStatus={}, bookingStatus={}, seatCount={}",
+                payment.getId(), booking != null ? booking.getId() : null, payment.getTransactionId(),
+                maskHash(payment.getMd5Hash()), payment.getStatus(),
+                booking != null ? booking.getStatus() : null, bookingSeats.size());
+
+        return paymentMapper.toResponseDto(payment);
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto checkStatus(Long id) {
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(payment.getCustomer());
+        return checkStatusInternal(id);
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto checkStatusFromSystem(Long id) {
+        return checkStatusInternal(id);
+    }
+
+    private PaymentResponseDto checkStatusInternal(Long id) {
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+
+        if (payment.getStatus() == PaymentStatus.PAID) {
+            return paymentMapper.toResponseDto(payment);
+        }
+
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
+        BakongCheckResult result = null;
+
+        if (shouldCheckBakong(payment)) {
+            log.debug("Checking Bakong payment: paymentId={}, bookingId={}, md5={}",
+                    payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
+                    maskHash(payment.getMd5Hash()));
+            result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
+            log.debug("Bakong status result: paymentId={}, bookingId={}, transactionId={}, md5={}, status={}, authoritative={}",
+                    payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
+                    payment.getTransactionId(), maskHash(payment.getMd5Hash()), result.status(), result.authoritative());
+            if (result.paid()) {
+                if (!isValidBakongConfirmation(payment, result)) {
+                    log.warn("Bakong confirmation validation failed; payment remains unconfirmed: paymentId={}, bookingId={}, transactionId={}, md5={}",
+                            payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
+                            payment.getTransactionId(), maskHash(payment.getMd5Hash()));
+                } else {
+                    log.info("Bakong payment confirmed: paymentId={}, bookingId={}, transactionId={}, md5={}",
+                            payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
+                            payment.getTransactionId(), maskHash(payment.getMd5Hash()));
+                    return confirmPaymentInternal(id, true);
+                }
+            }
+        }
+
+        payment = paymentRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return paymentMapper.toResponseDto(payment);
+        }
+
+        if (payment.getExpiresAt() != null && !now.isBefore(payment.getExpiresAt())) {
+            if (result != null && result.authoritative()) {
+                return expirePaymentInternal(payment);
+            }
+            // A transport/configuration failure is not proof that the
+            // customer did not pay. Keep PENDING and let polling retry.
+            log.warn("Bakong check was inconclusive after expiry; keeping payment PENDING: paymentId={}, md5={}",
+                    payment.getId(), maskHash(payment.getMd5Hash()));
+        }
+
+        return paymentMapper.toResponseDto(payment);
+    }
+
+    private void markPendingAttemptFailed(Payment payment) {
+        markPendingTransactions(payment, PaymentStatus.FAILED);
+    }
+
+    private void markPendingTransactions(Payment payment, PaymentStatus status) {
+        List<PaymentTransaction> transactions = paymentTransactionRepository
+                .findByPaymentIdAndStatusForUpdate(payment.getId(), PaymentStatus.PENDING);
+        transactions.forEach(transaction -> transaction.setStatus(status));
+        paymentTransactionRepository.saveAll(transactions);
+    }
+
+    private boolean shouldCheckBakong(Payment payment) {
+        if (payment.getPaymentMethod() != PaymentMethod.KHQR || payment.getMd5Hash() == null) {
+            return false;
+        }
+        return payment.getStatus() == PaymentStatus.PENDING
+                || payment.getStatus() == PaymentStatus.FAILED
+                || payment.getStatus() == PaymentStatus.EXPIRED;
+    }
+
+    private PaymentResponseDto expirePaymentInternal(Payment payment) {
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return paymentMapper.toResponseDto(payment);
+        }
+
+        if (payment.getBooking() != null) {
+            bookingService.expirePendingBooking(payment.getBooking().getId());
+            Long paymentId = payment.getId();
+            Payment expired = paymentRepository.findById(payment.getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Payment", paymentId));
+            return paymentMapper.toResponseDto(expired);
+        }
+
+        payment.setStatus(PaymentStatus.EXPIRED);
+        payment = paymentRepository.save(payment);
+        markPendingTransactions(payment, PaymentStatus.EXPIRED);
+
+        log.info("Payment expired without Bakong confirmation: paymentId={}", payment.getId());
+
+        return paymentMapper.toResponseDto(payment);
+    }
+
+    private PaymentTransaction findOrCreateTransaction(Payment payment) {
         String reference = payment.getTransactionId();
         List<PaymentTransaction> transactions = reference == null
                 ? List.of()
-                : paymentTransactionRepository.findByPaymentIdAndReferenceOrderByIdAsc(id, reference);
+                : paymentTransactionRepository.findByPaymentIdAndReferenceForUpdate(payment.getId(), reference);
         PaymentTransaction transaction = transactions.isEmpty()
-                ? paymentTransactionRepository.findByPaymentIdAndStatusOrderByIdAsc(id, PaymentStatus.PENDING)
+                ? paymentTransactionRepository.findByPaymentIdAndStatusForUpdate(payment.getId(), PaymentStatus.PENDING)
                 .stream()
                 .findFirst()
                 .orElse(null)
@@ -179,86 +404,59 @@ public class PaymentServiceImpl implements PaymentService {
             transaction.setOrder(payment.getOrder());
             transaction.setAmount(payment.getAmount());
             transaction.setTransactionType(payment.getPaymentMethod());
-            transaction.setReference(reference != null ? reference : "CONFIRM-" + id);
+            transaction.setReference(reference != null ? reference : "CONFIRM-" + payment.getId());
         }
-        transaction.setStatus(PaymentStatus.PAID);
-        paymentTransactionRepository.save(transaction);
-
-        return paymentMapper.toResponseDto(payment);
-    }
-
-    @Override
-    @Transactional
-    public PaymentResponseDto checkStatus(Long id) {
-        Payment payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
-        authorizationService.requireOwnerOrStaff(payment.getCustomer());
-
-        if (payment.getStatus() == PaymentStatus.PENDING) {
-            LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
-
-            // Check if payment has expired
-            if (payment.getExpiresAt() != null && now.isAfter(payment.getExpiresAt())) {
-                payment.setStatus(PaymentStatus.FAILED);
-                payment = paymentRepository.save(payment);
-
-                PaymentTransaction transaction = new PaymentTransaction();
-                transaction.setPayment(payment);
-                transaction.setBooking(payment.getBooking());
-                transaction.setOrder(payment.getOrder());
-                transaction.setAmount(payment.getAmount());
-                transaction.setTransactionType(payment.getPaymentMethod());
-                transaction.setStatus(PaymentStatus.FAILED);
-                transaction.setReference("EXPIRED-" + payment.getTransactionId());
-                paymentTransactionRepository.save(transaction);
-
-                return paymentMapper.toResponseDto(payment);
-            }
-
-            // If KHQR payment is not expired, verify against Bakong Network
-            if (payment.getPaymentMethod() == PaymentMethod.KHQR && payment.getMd5Hash() != null) {
-                BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
-                if (result.paid()) {
-                    log.info("Payment #{} verified as PAID via Bakong MD5 check", id);
-                    return confirmPaymentInternal(id);
-                }
-            }
-        }
-
-        return paymentMapper.toResponseDto(payment);
+        return transaction;
     }
 
     @Override
     @Transactional
     public PaymentResponseDto update(Long id, PaymentRequestDto dto) {
-        Payment existing = paymentRepository.findById(id)
+        Payment existing = paymentRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
         authorizationService.requireOwnerOrStaff(existing.getCustomer());
 
-        if (existing.getStatus() == PaymentStatus.PAID) {
-            throw new IllegalStateException("Cannot modify a payment that has already succeeded");
+        if (existing.getStatus() != PaymentStatus.PENDING) {
+            throw new IllegalStateException("Only pending payments can be modified");
         }
 
-        existing.setAmount(dto.amount());
-        existing.setPaymentMethod(dto.paymentMethod());
+        User requestedCustomer = authorizationService.resolveCustomerForAuthenticatedRequest(dto.customerId());
+        ensureSameCustomer(requestedCustomer, existing.getCustomer(), "Payment");
+        if (dto.paymentMethod() != existing.getPaymentMethod()) {
+            throw new IllegalArgumentException("Payment method cannot change; create a new payment attempt");
+        }
+        if (dto.bookingId() == null ? existing.getBooking() != null
+                : existing.getBooking() == null || !dto.bookingId().equals(existing.getBooking().getId())) {
+            throw new IllegalArgumentException("Payment booking cannot change");
+        }
+        if (dto.orderId() == null ? existing.getOrder() != null
+                : existing.getOrder() == null || !dto.orderId().equals(existing.getOrder().getId())) {
+            throw new IllegalArgumentException("Payment order cannot change");
+        }
 
-        if (dto.customerId() != null) {
-            existing.setCustomer(authorizationService.resolveCustomerForAuthenticatedRequest(dto.customerId()));
+        BigDecimal expectedAmount = dto.amount();
+        if (existing.getBooking() != null) {
+            Long bookingId = existing.getBooking().getId();
+            Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Booking", bookingId));
+            if (booking.getStatus() != BookingStatus.PENDING) {
+                throw new IllegalStateException("Only pending bookings can have pending payments");
+            }
+            expectedAmount = bookingTotalService.recalculate(booking);
         }
-        if (dto.bookingId() != null) {
-            Booking booking = bookingRepository.findById(dto.bookingId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.bookingId()));
-            authorizationService.requireOwnerOrStaff(booking.getCustomer());
-            ensureSameCustomer(existing.getCustomer(), booking.getCustomer(), "Booking");
-            existing.setBooking(booking);
+        if (existing.getOrder() != null) {
+            expectedAmount = expectedAmount.add(bookingTotalService.recalculateOrder(existing.getOrder()));
         }
-        if (dto.orderId() != null) {
-            Order order = orderRepository.findById(dto.orderId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Order", dto.orderId()));
-            authorizationService.requireOwnerOrStaff(order.getCustomer());
-            ensureSameCustomer(existing.getCustomer(), order.getCustomer(), "Order");
-            existing.setOrder(order);
+        if ((existing.getBooking() != null || existing.getOrder() != null)
+                && dto.amount().compareTo(expectedAmount) != 0) {
+            throw new IllegalArgumentException("Payment amount must match the current booking/order total: " + expectedAmount);
         }
+        if (existing.getPaymentMethod() == PaymentMethod.KHQR
+                && existing.getKhqrString() != null
+                && existing.getAmount().compareTo(expectedAmount) != 0) {
+            throw new IllegalArgumentException("KHQR amount cannot change; create a new payment attempt");
+        }
+        existing.setAmount(expectedAmount);
         existing = paymentRepository.save(existing);
         return paymentMapper.toResponseDto(existing);
     }
@@ -287,10 +485,10 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public void delete(Long id) {
+        authorizationService.requireStaffOrAdmin();
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
-        authorizationService.requireOwnerOrStaff(payment.getCustomer());
-        paymentRepository.delete(payment);
+        throw new IllegalStateException("Payment records are retained for audit and cannot be deleted");
     }
 
     private void ensureSameCustomer(User paymentCustomer, User linkedCustomer, String resourceName) {
@@ -300,5 +498,87 @@ public class PaymentServiceImpl implements PaymentService {
                 || !paymentCustomer.getId().equals(linkedCustomer.getId())) {
             throw new IllegalArgumentException(resourceName + " does not belong to the payment customer");
         }
+    }
+
+    private void ensureBookingHoldActive(Booking booking) {
+        if (booking.getExpiresAt() != null
+                && !booking.getExpiresAt().isAfter(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")))) {
+            bookingService.expirePendingBooking(booking.getId());
+            throw new IllegalStateException("Booking hold has expired");
+        }
+    }
+
+    private void ensureSeatsCanBeConfirmed(Booking booking, List<BookingSeat> bookingSeats) {
+        for (BookingSeat bookingSeat : bookingSeats) {
+            if (bookingSeat.getSeat() == null || booking.getShow() == null) {
+                throw new IllegalStateException("Booking seat data is incomplete");
+            }
+            seatRepository.findByIdForUpdate(bookingSeat.getSeat().getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Seat", bookingSeat.getSeat().getId()));
+            if (bookingSeatRepository.existsActiveReservationForShowSeat(
+                    booking.getShow().getId(), bookingSeat.getSeat().getId(), bookingSeat.getId())) {
+                throw new IllegalStateException("Booking seats are no longer available for late payment recovery");
+            }
+        }
+    }
+
+    private boolean isValidBakongConfirmation(Payment payment, BakongCheckResult result) {
+        // Mock mode has no real Bakong transaction details. Production must
+        // fail closed unless all merchant-owned fields can be verified.
+        if (khqrConfig.isMockMode()) {
+            return true;
+        }
+
+        if (result.amount() == null || result.currency() == null || result.currency().isBlank()
+                || result.toAccountId() == null || result.toAccountId().isBlank()) {
+            log.warn("Bakong confirmation data is incomplete: paymentId={}, md5={}",
+                    payment.getId(), maskHash(payment.getMd5Hash()));
+            return false;
+        }
+        if (payment.getAmount() == null || result.amount().compareTo(payment.getAmount()) != 0) {
+            log.warn("Bakong amount mismatch: paymentId={}, expectedAmount={}, receivedAmount={}",
+                    payment.getId(), payment.getAmount(), result.amount());
+            return false;
+        }
+
+        String expectedCurrency = khqrConfig.getCurrency() == null || khqrConfig.getCurrency().isBlank()
+                ? "USD"
+                : khqrConfig.getCurrency().trim().toUpperCase(Locale.ROOT);
+        if (!expectedCurrency.equalsIgnoreCase(result.currency().trim())) {
+            log.warn("Bakong currency mismatch: paymentId={}, expectedCurrency={}, receivedCurrency={}",
+                    payment.getId(), expectedCurrency, result.currency());
+            return false;
+        }
+
+        String expectedAccount = khqrConfig.getAccountId();
+        if (expectedAccount == null || expectedAccount.isBlank()
+                || !expectedAccount.trim().equalsIgnoreCase(result.toAccountId().trim())) {
+            log.warn("Bakong merchant account mismatch: paymentId={}, expectedAccount={}, receivedAccount={}",
+                    payment.getId(), maskAccount(expectedAccount), maskAccount(result.toAccountId()));
+            return false;
+        }
+        return true;
+    }
+
+    private String maskAccount(String accountId) {
+        if (accountId == null || accountId.isBlank()) {
+            return "<missing>";
+        }
+        String normalized = accountId.trim();
+        int separator = normalized.indexOf('@');
+        if (separator <= 1) {
+            return "***";
+        }
+        return normalized.substring(0, 2) + "***" + normalized.substring(separator);
+    }
+
+    private String maskHash(String hash) {
+        if (hash == null || hash.isBlank()) {
+            return "<missing>";
+        }
+        String normalized = hash.trim();
+        return normalized.length() <= 8
+                ? "****"
+                : normalized.substring(0, 4) + "..." + normalized.substring(normalized.length() - 4);
     }
 }

@@ -11,4 +11,5 @@ public interface BookingService {
     BookingResponseDto getById(Long id);
     List<BookingResponseDto> getAll();
     void delete(Long id);
+    void expirePendingBooking(Long id);
 }

@@ -11,6 +11,7 @@ public class BookingResponseDto {
     private Long id;
 
     private LocalDateTime bookedAt;
+    private LocalDateTime expiresAt;
     private String bookingCode;
     private BookingStatus status;
     private BigDecimal totalAmount;

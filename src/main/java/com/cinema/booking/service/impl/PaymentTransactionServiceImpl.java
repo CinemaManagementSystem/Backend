@@ -38,9 +38,15 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
         authorizationService.requireStaffOrAdmin();
         PaymentTransaction transaction = paymentTransactionMapper.toEntity(dto);
 
-        Payment payment = paymentRepository.findById(dto.getPaymentId())
+        Payment payment = paymentRepository.findByIdForUpdate(dto.getPaymentId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", dto.getPaymentId()));
         transaction.setPayment(payment);
+
+        if (dto.getReference() != null
+                && !paymentTransactionRepository.findByPaymentIdAndReferenceForUpdate(
+                payment.getId(), dto.getReference()).isEmpty()) {
+            throw new IllegalArgumentException("A transaction with this reference already exists for the payment");
+        }
 
         if (dto.getBookingId() != null) {
             Booking booking = bookingRepository.findById(dto.getBookingId())
@@ -67,9 +73,20 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
         existing.setTransactionType(dto.getTransactionType());
         existing.setReference(dto.getReference());
 
-        Payment payment = paymentRepository.findById(dto.getPaymentId())
+        Payment payment = paymentRepository.findByIdForUpdate(dto.getPaymentId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", dto.getPaymentId()));
         existing.setPayment(payment);
+
+        if (dto.getReference() != null) {
+            Long existingId = existing.getId();
+            boolean duplicateReference = paymentTransactionRepository
+                    .findByPaymentIdAndReferenceForUpdate(payment.getId(), dto.getReference())
+                    .stream()
+                    .anyMatch(transaction -> !transaction.getId().equals(existingId));
+            if (duplicateReference) {
+                throw new IllegalArgumentException("A transaction with this reference already exists for the payment");
+            }
+        }
 
         if (dto.getBookingId() != null) {
             existing.setBooking(bookingRepository.findById(dto.getBookingId())

@@ -37,6 +37,9 @@ build/
 .env.*
 !.env.example
 
+### Local payment test page ###
+src/main/resources/static/index.html
+
 ### Application Properties (contains DB passwords, JWT secrets) ###
 src/main/resources/application.properties
 

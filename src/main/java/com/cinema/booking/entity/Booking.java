@@ -22,6 +22,10 @@ public class Booking {
     @Column(name = "booked_at", nullable = false)
     private LocalDateTime bookedAt;
 
+    /** The immutable deadline for the temporary booking hold. */
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
+
     @Column(name = "booking_code", nullable = false, unique = true)
     private String bookingCode;
 
@@ -43,9 +47,14 @@ public class Booking {
     public void transitionTo(BookingStatus newStatus) {
         if (this.status == newStatus) return;
         
-        if (this.status == BookingStatus.PENDING && (newStatus == BookingStatus.CONFIRMED || newStatus == BookingStatus.CANCELLED)) {
+        if (this.status == BookingStatus.PENDING && (newStatus == BookingStatus.CONFIRMED
+                || newStatus == BookingStatus.CANCELLED || newStatus == BookingStatus.EXPIRED)) {
             this.status = newStatus;
         } else if (this.status == BookingStatus.CONFIRMED && (newStatus == BookingStatus.COMPLETED || newStatus == BookingStatus.CANCELLED)) {
+            this.status = newStatus;
+        } else if (this.status == BookingStatus.EXPIRED && newStatus == BookingStatus.CONFIRMED) {
+            // Allowed only by the payment confirmation service after an
+            // authoritative late Bakong confirmation and seat revalidation.
             this.status = newStatus;
         } else {
             throw new IllegalStateException("Invalid status transition from " + this.status + " to " + newStatus);

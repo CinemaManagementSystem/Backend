@@ -10,9 +10,10 @@ public class BookingMapper {
 
     public Booking toEntity(BookingRequestDto dto) {
         Booking booking = new Booking();
-        booking.setBookedAt(dto.getBookedAt());
-        booking.setBookingCode(dto.getBookingCode());
-        booking.setTotalAmount(dto.getTotalAmount());
+        // bookedAt and bookingCode are server-owned values. They are generated
+        // by BookingService so clients cannot extend a hold or choose a
+        // predictable/colliding public reference.
+        // totalAmount is derived by the service from booking_seats, never trusted from the request.
         // TODO: FK fields (customer, show) are resolved in the Service layer
         // using their respective repositories, then set on booking before saving.
         return booking;
@@ -22,6 +23,7 @@ public class BookingMapper {
         BookingResponseDto dto = new BookingResponseDto();
         dto.setId(booking.getId());
         dto.setBookedAt(booking.getBookedAt());
+        dto.setExpiresAt(booking.getExpiresAt());
         dto.setBookingCode(booking.getBookingCode());
         dto.setStatus(booking.getStatus());
         dto.setTotalAmount(booking.getTotalAmount());
