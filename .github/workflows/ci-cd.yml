@@ -16,6 +16,7 @@ permissions:
 env:
   JAVA_VERSION: "21"
   REGISTRY: ghcr.io
+  MAVEN_OPTS: "-Duser.timezone=Asia/Phnom_Penh"
 
 jobs:
   ci:

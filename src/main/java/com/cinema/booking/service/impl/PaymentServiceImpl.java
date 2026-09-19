@@ -331,7 +331,10 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         if (payment.getExpiresAt() != null && !now.isBefore(payment.getExpiresAt())) {
-            if (result != null && result.authoritative()) {
+            // A PAID response that fails validation is not proof that the
+            // payment is unpaid. Keep it pending so the next poll can retry
+            // instead of expiring a potentially valid customer payment.
+            if (result != null && result.authoritative() && !result.paid()) {
                 return expirePaymentInternal(payment);
             }
             // A transport/configuration failure is not proof that the
