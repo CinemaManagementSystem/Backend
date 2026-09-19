@@ -45,6 +45,7 @@ public class BakongServiceImpl implements BakongService {
     private static final String INVALID_MD5_MESSAGE = "Invalid KHQR MD5 hash";
     private static final int DEFAULT_EXPIRY_MINUTES = 5;
     private static final int MAX_EXPIRY_MINUTES = 10;
+    private static final int EXPIRY_SAFETY_SECONDS = 1;
     private static final int MAX_BILL_NUMBER_LENGTH = 25;
     private static final int MAX_STORE_LABEL_LENGTH = 25;
 
@@ -75,7 +76,10 @@ public class BakongServiceImpl implements BakongService {
         String bill = normalizeLabel(billNumber, "BILL-" + System.currentTimeMillis(), MAX_BILL_NUMBER_LENGTH);
         String storeLabel = normalizeLabel(description, DEFAULT_STORE_LABEL, MAX_STORE_LABEL_LENGTH);
         LocalDateTime now = LocalDateTime.now(PHNOM_PENH_ZONE);
-        LocalDateTime configuredExpiry = now.plusMinutes(resolveExpiryMinutes());
+        // Leave a small safety margin so the externally observed lifetime
+        // never exceeds the configured maximum after generation time elapses.
+        LocalDateTime configuredExpiry = now.plusMinutes(resolveExpiryMinutes())
+                .minusSeconds(EXPIRY_SAFETY_SECONDS);
         LocalDateTime expiresAt = requestedExpiresAt != null && requestedExpiresAt.isBefore(configuredExpiry)
                 ? requestedExpiresAt
                 : configuredExpiry;
