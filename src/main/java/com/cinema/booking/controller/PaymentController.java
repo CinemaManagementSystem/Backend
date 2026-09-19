@@ -2,6 +2,8 @@ package com.cinema.booking.controller;
 
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
+import com.cinema.booking.dto.payments.VerifyKhqrRequestDto;
+import com.cinema.booking.dto.payments.PrepareKhqrRequestDto;
 import com.cinema.booking.service.PaymentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -31,6 +33,22 @@ public class PaymentController {
     @GetMapping("/{id}/status")
     public ResponseEntity<PaymentResponseDto> checkStatus(@PathVariable Long id) {
         return ResponseEntity.ok(paymentService.checkStatus(id));
+    }
+
+    @PostMapping("/verify-khqr")
+    public ResponseEntity<PaymentResponseDto> verifyKhqr(@Valid @RequestBody VerifyKhqrRequestDto request) {
+        return ResponseEntity.ok(paymentService.verifyKhqr(request));
+    }
+
+    @PostMapping("/{id}/switch-to-cash")
+    public ResponseEntity<PaymentResponseDto> switchToCash(@PathVariable Long id) {
+        return ResponseEntity.ok(paymentService.switchToCash(id));
+    }
+
+    @PostMapping("/{id}/prepare-khqr")
+    public ResponseEntity<PaymentResponseDto> prepareKhqr(@PathVariable Long id,
+            @Valid @RequestBody PrepareKhqrRequestDto request) {
+        return ResponseEntity.ok(paymentService.prepareKhqr(id, request));
     }
 
     @PutMapping("/{id}")

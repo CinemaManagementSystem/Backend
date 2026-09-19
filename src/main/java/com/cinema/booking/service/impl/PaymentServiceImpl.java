@@ -5,6 +5,8 @@ import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
+import com.cinema.booking.dto.payments.VerifyKhqrRequestDto;
+import com.cinema.booking.dto.payments.PrepareKhqrRequestDto;
 import com.cinema.booking.entity.Booking;
 import com.cinema.booking.entity.BookingSeat;
 import com.cinema.booking.entity.Order;
@@ -27,6 +29,7 @@ import com.cinema.booking.service.BakongService;
 import com.cinema.booking.service.BookingTotalService;
 import com.cinema.booking.service.BookingService;
 import com.cinema.booking.service.PaymentService;
+import com.cinema.booking.service.KhqrPayloadValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -37,6 +40,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -135,6 +139,7 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setAmount(amount);
         payment.setPaymentMethod(method);
         payment.setStatus(PaymentStatus.PENDING);
+        payment.setClientQrPrepared(false);
 
         String txId = "TXN-" + method.name() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
@@ -185,6 +190,12 @@ public class PaymentServiceImpl implements PaymentService {
         if (payment.getPaymentMethod() != PaymentMethod.CASH) {
             throw new IllegalStateException("KHQR payments must be confirmed by Bakong verification");
         }
+        if (payment.getBooking() != null && paymentRepository.findByBookingId(payment.getBooking().getId()).stream()
+                .anyMatch(attempt -> attempt.getPaymentMethod() == PaymentMethod.KHQR
+                        && attempt.getExpiresAt() != null
+                        && attempt.getExpiresAt().isAfter(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"))))) {
+            throw new IllegalStateException("Wait for the previous KHQR to expire before collecting cash");
+        }
         return confirmPaymentInternal(id);
     }
 
@@ -226,6 +237,9 @@ public class PaymentServiceImpl implements PaymentService {
         Booking booking = lockedBooking != null ? lockedBooking : payment.getBooking();
         List<BookingSeat> bookingSeats = List.of();
         if (booking != null) {
+            boolean alreadyPaid = paymentRepository.findByBookingId(booking.getId()).stream()
+                    .anyMatch(other -> !other.getId().equals(id) && other.getStatus() == PaymentStatus.PAID);
+            if (alreadyPaid) throw new IllegalStateException("This booking already has a paid payment");
             if (booking.getStatus() == BookingStatus.EXPIRED && !lateRecovery) {
                 throw new IllegalStateException("An expired booking requires late Bakong recovery");
             }
@@ -254,6 +268,13 @@ public class PaymentServiceImpl implements PaymentService {
 
             bookingSeats.forEach(bookingSeat -> bookingSeat.setStatus("CONFIRMED"));
             bookingSeatRepository.saveAll(bookingSeats);
+            for (Payment other : paymentRepository.findByBookingIdAndStatusOrderByIdAsc(booking.getId(), PaymentStatus.PENDING)) {
+                if (!other.getId().equals(id)) {
+                    other.setStatus(PaymentStatus.FAILED);
+                    paymentRepository.save(other);
+                    markPendingTransactions(other, PaymentStatus.FAILED);
+                }
+            }
         }
 
         if (payment.getOrder() != null) {
@@ -289,6 +310,88 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public PaymentResponseDto checkStatusFromSystem(Long id) {
         return checkStatusInternal(id);
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto verifyKhqr(VerifyKhqrRequestDto request) {
+        Payment payment = paymentRepository.findById(request.paymentId())
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", request.paymentId()));
+        authorizationService.requireOwnerOrStaff(payment.getCustomer());
+
+        if (payment.getPaymentMethod() != PaymentMethod.KHQR) {
+            throw new IllegalArgumentException("Only KHQR payments can be verified with a QR payload");
+        }
+        if (!Objects.equals(payment.getKhqrString(), request.qr().trim())
+                || !Objects.equals(payment.getMd5Hash(), request.md5().trim())) {
+            throw new IllegalArgumentException("The QR payload does not match this payment");
+        }
+
+        return checkStatusInternal(payment.getId());
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto switchToCash(Long id) {
+        Payment snapshot = paymentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(snapshot.getCustomer());
+        // Use the same booking -> payment lock order as payment confirmation.
+        if (snapshot.getBooking() == null) {
+            throw new IllegalArgumentException("Cash switching requires a booking");
+        }
+        Booking booking = bookingRepository.findByIdForUpdate(snapshot.getBooking().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking", snapshot.getBooking().getId()));
+        Payment payment = paymentRepository.findByIdForUpdate(id).orElseThrow();
+        if (payment.getStatus() == PaymentStatus.PAID || payment.getPaymentMethod() == PaymentMethod.CASH) {
+            return paymentMapper.toResponseDto(payment);
+        }
+        BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
+        if (result.paid() && isValidBakongConfirmation(payment, result)) return confirmPaymentInternal(id, true);
+        if (result.paid() || !result.authoritative()) {
+            throw new IllegalStateException("Payment verification is unavailable. Check again before switching to cash");
+        }
+        if (booking.getStatus() != BookingStatus.PENDING) {
+            throw new IllegalStateException("Only a pending booking can switch to cash");
+        }
+        ensureBookingHoldActive(booking);
+        for (Payment existing : paymentRepository.findByBookingIdAndStatusOrderByIdAsc(booking.getId(), PaymentStatus.PENDING)) {
+            if (existing.getPaymentMethod() == PaymentMethod.CASH) return paymentMapper.toResponseDto(existing);
+        }
+        // Keep the old QR and its audit trail available for late-payment reconciliation.
+        payment.setStatus(PaymentStatus.FAILED);
+        paymentRepository.save(payment);
+        markPendingTransactions(payment, PaymentStatus.FAILED);
+
+        return create(new PaymentRequestDto(
+                payment.getAmount(),
+                PaymentMethod.CASH,
+                payment.getCustomer().getId(),
+                payment.getBooking() != null ? payment.getBooking().getId() : null,
+                payment.getOrder() != null ? payment.getOrder().getId() : null,
+                null,
+                null
+        ));
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto prepareKhqr(Long id, PrepareKhqrRequestDto request) {
+        Payment payment = paymentRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
+        authorizationService.requireOwnerOrStaff(payment.getCustomer());
+        if (Objects.equals(payment.getKhqrString(), request.qr()) && Objects.equals(payment.getMd5Hash(), request.md5())) {
+            return paymentMapper.toResponseDto(payment);
+        }
+        if (payment.getPaymentMethod() != PaymentMethod.KHQR || payment.getStatus() != PaymentStatus.PENDING
+                || payment.isClientQrPrepared() || !Objects.equals(payment.getMd5Hash(), request.expectedMd5())) {
+            throw new IllegalStateException("The payment QR is already prepared or no longer pending");
+        }
+        KhqrPayloadValidator.validate(payment.getKhqrString(), request.qr(), request.md5(), System.currentTimeMillis());
+        payment.setKhqrString(request.qr());
+        payment.setMd5Hash(request.md5().toLowerCase(Locale.ROOT));
+        payment.setClientQrPrepared(true);
+        return paymentMapper.toResponseDto(paymentRepository.save(payment));
     }
 
     private PaymentResponseDto checkStatusInternal(Long id) {

@@ -48,6 +48,9 @@ public class Payment {
     @Column(name = "expires_at", nullable = true)
     private LocalDateTime expiresAt;
 
+    // One browser SDK payload may replace the server draft before display.
+    private boolean clientQrPrepared;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "booking_id", nullable = true)
     private Booking booking;

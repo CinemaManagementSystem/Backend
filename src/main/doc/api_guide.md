@@ -1,13 +1,15 @@
 # Frontend API Guide — Cinema Booking System
 
-> **Base URL:** `http://localhost:8081`  
+> **API base URL:** `http://localhost:8081/api`
+> **Backend root:** `http://localhost:8081`
 > **Content-Type:** `application/json` (unless noted otherwise)  
-> **Interactive Docs:** Swagger UI at `/swagger-ui/index.html`
+> **Interactive Docs:** `http://localhost:8081/swagger-ui.html`
 
 ---
 
 ## Table of Contents
 
+0. [Frontend Setup](#0-frontend-setup)
 1. [Authentication](#1-authentication)
 2. [Request & Response Conventions](#2-request--response-conventions)
 3. [Error Handling](#3-error-handling)
@@ -29,6 +31,86 @@
    - [Payments](#payments--apipayments)
    - [Payment Transactions](#payment-transactions--apipayment-transactions)
 6. [Business Workflows](#6-business-workflows)
+
+---
+
+## 0. Frontend Setup
+
+### Local development
+
+Start the backend with Docker Compose. The frontend runs separately (usually on
+`http://localhost:5173`) and calls the backend through the API base URL above.
+
+```bash
+docker compose up -d db app
+```
+
+Useful local URLs:
+
+| Purpose | URL |
+|---|---|
+| API base | `http://localhost:8081/api` |
+| Swagger UI | `http://localhost:8081/swagger-ui.html` |
+| OpenAPI JSON | `http://localhost:8081/v3/api-docs` |
+| phpMyAdmin | `http://localhost:8083` |
+
+The frontend origin must be listed in `CORS_ALLOWED_ORIGINS`. The Compose setup
+already allows `http://localhost:5173`, `http://127.0.0.1:5173`, and
+`http://localhost:3000`. If the frontend uses another origin, add it to the
+backend environment and restart the app.
+
+### Frontend environment variable
+
+Keep the `/api` suffix in the frontend variable so calls stay consistent:
+
+```env
+VITE_API_BASE_URL=http://localhost:8081/api
+# or, for Create React App:
+REACT_APP_API_BASE_URL=http://localhost:8081/api
+```
+
+Example request helper:
+
+```javascript
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+export async function apiFetch(path, options = {}) {
+  const token = localStorage.getItem('accessToken');
+  const headers = new Headers(options.headers || {});
+  if (options.body && !(options.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw Object.assign(new Error(error.message || 'Request failed'), {
+      status: response.status,
+      details: error.details
+    });
+  }
+  return response.status === 204 ? null : response.json();
+}
+```
+
+### Backend configuration that affects the frontend
+
+| Property / environment variable | Default | Frontend impact |
+|---|---|---|
+| `SERVER_PORT` | `8081` | Changes the backend root/API URL |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000` | Must include the exact frontend origin |
+| `JWT_EXPIRATION` | `86400000` ms | Access-token lifetime; use refresh before expiry |
+| `APP_SEED_ENABLED` | `false` | Enables development seed data when set to `true` |
+| `APP_SCHEDULING_ENABLED` | `true` | Enables booking/payment expiry jobs |
+| `BOOKING_HOLD_TTL_MINUTES` | `5` | Booking expires five minutes before showtime |
+| `BAKONG_MOCK_MODE` | `false` | In mock mode, the test paid MD5 is `deadbeefdeadbeefdeadbeefdeadbeef` |
+| `RATE_LIMIT_ENABLED` | `false` | Enables the API rate limits documented below |
+| `BAKONG_POLLING_RATE_MS` | `60000` | Backend polling interval for KHQR status |
+| `BOOKING_EXPIRY_RATE_MS` | `120000` | Backend interval for expiring unpaid bookings |
+
+Do not expose database, JWT secret, Cloudinary secret, or Bakong token values in
+frontend environment variables. They belong only in the backend `.env`.
 
 ---
 
@@ -54,16 +136,21 @@ POST /api/auth/login
 // Response 200 OK
 {
   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "refreshToken": "refresh-token-value",
   "tokenType": "Bearer",
   "expiresIn": 86400000,
   "user": {
     "id": 1,
     "username": "john",
     "email": "john@example.com",
-    "role": "USER"
+    "role": "ROLE_USER"
   }
 }
 ```
+
+Store both tokens. Send the access token as a Bearer token; keep the refresh
+token in a protected client-side store and replace both tokens whenever refresh
+returns successfully.
 
 ### Using the Token
 
@@ -95,12 +182,38 @@ POST /api/auth/register
     "id": 2,
     "username": "newuser",
     "email": "user@example.com",
-    "role": "USER"
+    "role": "ROLE_USER"
   }
 }
 ```
 
-> **Note:** New accounts are created with role `USER` and must be activated by an admin before login.
+> **Note:** New accounts are created with role `ROLE_USER` and status `ACTIVE`; they can log in immediately.
+
+### Refreshing, checking, and ending a session
+
+Refresh tokens are rotated, so always replace the stored refresh token with the
+one returned by this endpoint.
+
+```http
+POST /api/auth/refresh
+Content-Type: application/json
+```
+
+```json
+{ "refreshToken": "refresh-token-value" }
+```
+
+`POST /api/auth/refresh` returns the same `AuthResponseDto` shape as login.
+`GET /api/auth/me` returns the current authenticated user and requires the
+access-token header. To log out, call `POST /api/auth/logout` with the access
+token and, when available, this body:
+
+```json
+{ "refreshToken": "refresh-token-value" }
+```
+
+Logout revokes the supplied refresh token and/or access token. Clear both local
+tokens after a successful logout.
 
 ---
 
@@ -114,7 +227,10 @@ POST /api/auth/register
 | **Delete endpoints** | Return `204 No Content` (empty body) |
 | **ID fields** | All IDs are `Long` (integers) |
 | **Date/Time format** | ISO-8601 (`2024-03-15T14:30:00`) for `LocalDateTime`, `2024-03-15` for `LocalDate` |
-| **Decimal format** | Strings representing decimal numbers (e.g., `"12.50"`) for `BigDecimal` fields |
+| **Decimal format** | JSON numbers (e.g., `12.50`) for `BigDecimal` fields; use a decimal-safe type in the frontend for money |
+| **Authentication** | Protected endpoints require `Authorization: Bearer <accessToken>` |
+| **Role format** | Auth responses use `ROLE_USER`, `ROLE_STAFF`, or `ROLE_ADMIN` |
+| **Business time zone** | `Asia/Phnom_Penh`; `LocalDateTime` values have no timezone suffix |
 
 ---
 
@@ -212,7 +328,7 @@ Register a new user account.
 ```json
 {
   "message": "Registration successful",
-  "user": { "id": 1, "username": "john", "email": "john@example.com", "role": "USER" }
+  "user": { "id": 1, "username": "john", "email": "john@example.com", "role": "ROLE_USER" }
 }
 ```
 
@@ -231,11 +347,32 @@ Authenticate and receive a JWT.
 ```json
 {
   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "refreshToken": "refresh-token-value",
   "tokenType": "Bearer",
   "expiresIn": 86400000,
-  "user": { "id": 1, "username": "john", "email": "john@example.com", "role": "USER" }
+  "user": {
+    "id": 1,
+    "username": "john",
+    "email": "john@example.com",
+    "role": "ROLE_USER"
+  }
 }
 ```
+
+#### `POST /api/auth/refresh`
+
+Send `{ "refreshToken": "..." }`. The response has the same shape as login,
+including a new access token and a rotated refresh token.
+
+#### `GET /api/auth/me`
+
+Returns the current `UserResponseDto`. Requires `Authorization: Bearer <accessToken>`.
+
+#### `POST /api/auth/logout`
+
+The endpoint is public at the HTTP security layer so clients can safely call it
+when an access token is already expired. Send the access token when available
+and optionally `{ "refreshToken": "..." }` to revoke the refresh token too.
 
 ---
 
@@ -551,26 +688,38 @@ Same fields as `POST`.
 
 | Field | Type | Required | Format |
 |---|---|---|---|
-| `bookingCode` | String | yes | Unique booking reference |
-| `bookedAt` | LocalDateTime | yes | `YYYY-MM-DDTHH:mm:ss` |
-| `totalAmount` | BigDecimal | yes | Positive |
-| `customerId` | Long | yes | |
-| `showId` | Long | yes | |
+| `customerId` | Long | yes | Must be the logged-in user for a customer request |
+| `showId` | Long | yes | Existing show |
+| `bookingCode` | String | no | Ignored on create; generated by the server |
+| `bookedAt` | LocalDateTime | no | Ignored on create; set by the server |
+| `totalAmount` | BigDecimal | no | Ignored on create; calculated from reserved seats and orders |
+
+Minimal request:
+
+```json
+{ "customerId": 1, "showId": 1 }
+```
 
 **Response:** `201 Created`
 ```json
 {
   "id": 1,
   "bookedAt": "2024-03-20T10:00:00",
+  "expiresAt": "2024-03-20T13:55:00",
   "bookingCode": "BK-20240320-001",
   "status": "PENDING",
-  "totalAmount": 16.00,
+  "totalAmount": 0.00,
   "customerId": 1,
   "showId": 1
 }
 ```
 
-> **Status flow:** `PENDING` → `CONFIRMED` (after payment) → `COMPLETED` or `CANCELLED`
+The server sets `PENDING`, generates the booking code/time, and calculates the
+amount. Add booking seats before creating a payment, then use the latest
+server-returned total. By default, `expiresAt` is five minutes before the show
+starts (`BOOKING_HOLD_TTL_MINUTES` controls this behavior).
+
+> **Status flow:** `PENDING` → `CONFIRMED` (after payment) → `COMPLETED` or `CANCELLED`; an unpaid hold can become `EXPIRED`.
 
 #### `POST /api/booking-seats` — Authenticated
 
@@ -587,6 +736,7 @@ Reserve a seat for an existing booking.
   "id": 1,
   "price": 8.00,
   "status": "PENDING",
+  "expiresAt": "2024-03-20T13:55:00",
   "bookingId": 1,
   "seatId": 5
 }
@@ -735,10 +885,16 @@ Also deletes the associated image from Cloudinary.
 | `amount` | BigDecimal | yes | Positive |
 | `paymentMethod` | String | yes | `CASH` or `KHQR` |
 | `customerId` | Long | yes | |
-| `bookingId` | Long | no* | Provide at least one of `bookingId`/`orderId` |
-| `orderId` | Long | no* | |
+| `bookingId` | Long | no | Link to a booking when paying for a booking |
+| `orderId` | Long | no | Link to an order when paying for an order |
 | `merchantName` | String | no | KHQR-specific |
 | `accountId` | String | no | KHQR-specific |
+
+For a customer purchase, provide the relevant `bookingId` and/or `orderId`.
+The server compares `amount` with the current server-side total; do not trust a
+price calculated only in the frontend. A booking payment must target a `PENDING`
+booking whose hold has not expired. Retrying an existing pending payment reuses
+that payment instead of creating a duplicate.
 
 **KHQR Response:** `201 Created`
 ```json
@@ -765,7 +921,7 @@ Also deletes the associated image from Cloudinary.
   "amount": 8.00,
   "paymentMethod": "CASH",
   "status": "PENDING",
-  "transactionId": "TXN-CASH-F6E5D4C3B2A1",
+  "transactionId": null,
   "paidAt": null,
   "expiresAt": null,
   "khqrString": null,
@@ -789,9 +945,18 @@ Manually confirms a payment (e.g., cash received). Transitions linked booking �
 Poll this endpoint to check payment status. For KHQR payments, the server automatically checks with Bakong network.
 
 **Behavior:**
-- If `PENDING` and expired → status changes to `FAILED`
-- If `PENDING` with valid KHQR → checks Bakong; auto-confirms if paid
-- Otherwise returns current state
+- If `PENDING` and paid is confirmed by Bakong → status changes to `PAID`
+- If the payment/booking hold expires → status changes to `EXPIRED`
+- If Bakong returns an authoritative not-found/unpaid result, the payment can
+  remain `PENDING` until its expiry; keep polling while `expiresAt` is still in
+  the future
+- Transport, configuration, or invalid-response failures do not mean the user
+  has paid; keep the payment pending and retry according to the expiry window
+
+Treat `PAID`, `FAILED`, and `EXPIRED` as terminal statuses. A `CASH` payment
+remains pending until Staff/Admin calls the confirm endpoint. The response
+fields `khqrString`, `md5Hash`, and `expiresAt` are populated for KHQR and are
+`null` for CASH.
 
 #### `GET /api/payments` / `GET /api/payments/{id}`
 
@@ -853,15 +1018,18 @@ Payment transaction records are normally created by backend payment logic. Custo
 1. Browse movies     GET /api/movies
 2. View showtimes    GET /api/shows  (filter by movieId)
 3. View seats        GET /api/seats  (filter by screenId)
-4. Create booking    POST /api/bookings         → status: PENDING
-5. Reserve seats     POST /api/booking-seats    (one per seat)
-6. Create payment    POST /api/payments         → status: PENDING
+4. Create booking    POST /api/bookings         → status: PENDING, total: 0
+5. Reserve seats     POST /api/booking-seats    (one per seat; total recalculates)
+6. Optional order    POST /api/orders, then POST /api/order-items
+7. Create payment    POST /api/payments         → status: PENDING
    ├─ CASH:  Staff confirms   POST /api/payments/{id}/confirm
    └─ KHQR:  Customer scans QR, frontend polls GET /api/payments/{id}/status
              → Server auto-confirms when Bakong reports PAID
-7. Order created     POST /api/orders           (linked to booking)
-8. Add order items   POST /api/order-items      (concessions)
 ```
+
+Create the order and order items before payment when concessions are part of the
+same checkout. After every seat/order change, use the latest booking/order
+response to obtain the amount sent to `POST /api/payments`.
 
 ### KHQR Payment Polling (Frontend Implementation)
 
@@ -875,7 +1043,9 @@ async function pollPaymentStatus(paymentId, token) {
     const data = await res.json();
 
     if (data.status === 'PAID') return { success: true, data };
-    if (data.status === 'FAILED') return { success: false, reason: 'expired' };
+    if (data.status === 'FAILED' || data.status === 'EXPIRED') {
+      return { success: false, reason: 'expired' };
+    }
 
     await new Promise(r => setTimeout(r, 1000));
   }
@@ -903,6 +1073,6 @@ async function pollPaymentStatus(paymentId, token) {
 | Enum | Values |
 |---|---|
 | `Role` | `USER`, `STAFF`, `ADMIN` |
-| `BookingStatus` | `PENDING`, `CONFIRMED`, `CANCELLED`, `COMPLETED` |
-| `PaymentStatus` | `PENDING`, `PAID`, `FAILED` |
+| `BookingStatus` | `PENDING`, `CONFIRMED`, `CANCELLED`, `EXPIRED`, `COMPLETED` |
+| `PaymentStatus` | `PENDING`, `PAID`, `FAILED`, `EXPIRED` |
 | `PaymentMethod` | `CASH`, `KHQR` |
