@@ -202,6 +202,12 @@ public class BakongServiceImpl implements BakongService {
                 return BakongCheckResult.paid(hash, fromAccount, toAccount, amount, currency);
             }
 
+            if (isRateLimitedResponse(responseMessage)) {
+                log.warn("Bakong API rate limit reached while checking MD5 {}: {}",
+                        maskHash(normalizedMd5), responseMessage);
+                return BakongCheckResult.failed(normalizedMd5, responseMessage);
+            }
+
             if (isNotFoundResponse(responseMessage)) {
                 return BakongCheckResult.notFound(normalizedMd5);
             }
@@ -211,7 +217,7 @@ public class BakongServiceImpl implements BakongService {
         } catch (RestClientResponseException ex) {
             log.warn("Bakong API returned an error while checking MD5 {}: status={}, message={}",
                     maskHash(normalizedMd5), ex.getStatusCode(), ex.getMessage());
-            return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+            return BakongCheckResult.failed(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         } catch (RestClientException ex) {
             log.warn("Failed to check Bakong transaction by MD5 {} from live API: {}",
                     maskHash(normalizedMd5), ex.getMessage());
@@ -343,6 +349,16 @@ public class BakongServiceImpl implements BakongService {
         return normalizedMessage.contains("not found")
                 || normalizedMessage.contains("not exist")
                 || normalizedMessage.contains("no transaction");
+    }
+
+    private boolean isRateLimitedResponse(String responseMessage) {
+        if (!hasText(responseMessage)) {
+            return false;
+        }
+        String normalizedMessage = responseMessage.toLowerCase(Locale.ROOT);
+        return normalizedMessage.contains("daily request limit")
+                || normalizedMessage.contains("rate limit")
+                || normalizedMessage.contains("too many request");
     }
 
     private String safeStatusMessage(String message) {

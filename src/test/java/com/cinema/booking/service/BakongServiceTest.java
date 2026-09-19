@@ -346,6 +346,29 @@ class BakongServiceTest {
     }
 
     @Test
+    @DisplayName("Bakong daily request limit is inconclusive, not an unpaid transaction")
+    void testCheckTransactionRateLimited() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(LIVE_TOKEN);
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
+                .andRespond(withSuccess(
+                        "{\"responseCode\":1,\"responseMessage\":\"Daily request limit of 100 exceeded. Please try again tomorrow.\"}",
+                        MediaType.APPLICATION_JSON));
+
+        BakongCheckResult result = service.checkTransactionByMd5("abcdef1234567890abcdef1234567890");
+
+        server.verify();
+        assertFalse(result.paid());
+        assertEquals("FAILED", result.status());
+        assertFalse(result.authoritative());
+    }
+
+    @Test
     @DisplayName("Live unknown MD5 must not be treated as paid")
     void testCheckTransactionLiveUnknownMd5() {
         khqrConfig.setMockMode(false);
@@ -412,7 +435,7 @@ class BakongServiceTest {
         server.verify();
         assertNotNull(result);
         assertFalse(result.paid());
-        assertEquals("PENDING", result.status());
+        assertEquals("FAILED", result.status());
         assertEquals("Unable to verify payment at this time", result.message());
     }
 
