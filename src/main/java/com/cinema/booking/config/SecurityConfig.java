@@ -44,7 +44,10 @@ import java.util.List;
 public class SecurityConfig {
 
     private static final String[] PUBLIC_AUTH_PATHS = {
-        "/api/auth/**"
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/api/auth/logout"
     };
 
     private static final String[] DEV_PUBLIC_PATHS = {

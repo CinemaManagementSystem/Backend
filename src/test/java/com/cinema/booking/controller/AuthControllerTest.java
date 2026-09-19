@@ -217,6 +217,38 @@ public class AuthControllerTest {
     }
 
     @Test
+    void me_ReturnsAuthenticatedUserProfile() throws Exception {
+        LoginRequestDto loginDto = LoginRequestDto.builder()
+                .username("user1")
+                .password("password123")
+                .build();
+
+        JsonNode loginResponse = objectMapper.readTree(mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginDto)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + loginResponse.get("accessToken").asText()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(testUser.getId().intValue()))
+                .andExpect(jsonPath("$.username").value("user1"))
+                .andExpect(jsonPath("$.email").value("user@example.com"))
+                .andExpect(jsonPath("$.role").value("ROLE_USER"))
+                .andExpect(jsonPath("$.name").value("Normal User"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    @Test
+    void me_RequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void login_StaffUser_Successful() throws Exception {
         LoginRequestDto dto = LoginRequestDto.builder()
                 .username("staff1")

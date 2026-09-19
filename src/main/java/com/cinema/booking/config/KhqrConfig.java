@@ -19,6 +19,7 @@ public class KhqrConfig {
     private String currency;
     private String email;
     private boolean mockMode;
-    private int expiryMinutes = 2;
+    private int expiryMinutes = 5;
+    private int recoveryWindowMinutes = 15;
 
 }

@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "booking_seats")
@@ -22,6 +23,10 @@ public class BookingSeat {
 
     @Column(name = "status", nullable = false)
     private String status;
+
+    /** Copied from the parent booking so clients can render the same deadline. */
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "booking_id", nullable = false)

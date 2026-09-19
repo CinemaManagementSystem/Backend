@@ -20,7 +20,29 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     List<Payment> findByStatusAndPaymentMethodAndMd5HashIsNotNull(PaymentStatus status, PaymentMethod paymentMethod);
 
+    List<Payment> findByStatusInAndPaymentMethodAndMd5HashIsNotNull(
+            List<PaymentStatus> statuses,
+            PaymentMethod paymentMethod
+    );
+
+    @Query("""
+            select p from Payment p
+            where p.status in :statuses
+              and p.paymentMethod = :paymentMethod
+              and p.md5Hash is not null
+              and (p.expiresAt is null or p.expiresAt >= :recoveryCutoff)
+            """)
+    List<Payment> findRecoverableKhqrPayments(
+            @Param("statuses") List<PaymentStatus> statuses,
+            @Param("paymentMethod") PaymentMethod paymentMethod,
+            @Param("recoveryCutoff") LocalDateTime recoveryCutoff);
+
     List<Payment> findByCustomerId(Long customerId);
+
+    List<Payment> findByBookingId(Long bookingId);
+
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    List<Payment> findByBookingIdAndStatusOrderByIdAsc(Long bookingId, PaymentStatus status);
 
     Optional<Payment> findByMd5Hash(String md5Hash);
 

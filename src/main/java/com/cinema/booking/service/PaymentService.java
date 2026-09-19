@@ -13,5 +13,6 @@ public interface PaymentService {
     PaymentResponseDto confirmPayment(Long id);
     PaymentResponseDto confirmPaymentFromSystem(Long id);
     PaymentResponseDto checkStatus(Long id);
+    PaymentResponseDto checkStatusFromSystem(Long id);
     void delete(Long id);
 }

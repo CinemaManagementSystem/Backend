@@ -187,7 +187,7 @@ public class PaymentControllerTest {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setCustomer(customerUser);
         payment.setTransactionId("TXN-KHQR-TEST103");
-        payment.setMd5Hash("randomhash12345");
+        payment.setMd5Hash("0123456789abcdef0123456789abcdef");
         payment = paymentRepository.save(payment);
 
         mockMvc.perform(get("/api/payments/" + payment.getId() + "/status")
@@ -206,7 +206,7 @@ public class PaymentControllerTest {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setCustomer(customerUser);
         payment.setTransactionId("TXN-KHQR-TEST104");
-        payment.setMd5Hash("MOCK_PAID_1234567890abcdef");
+        payment.setMd5Hash("deadbeefdeadbeefdeadbeefdeadbeef");
         payment = paymentRepository.save(payment);
 
         mockMvc.perform(get("/api/payments/" + payment.getId() + "/status")

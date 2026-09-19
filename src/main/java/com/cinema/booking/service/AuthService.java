@@ -7,6 +7,7 @@ import com.cinema.booking.dto.auth.RefreshTokenRequestDto;
 import com.cinema.booking.dto.auth.RegisterRequestDto;
 import com.cinema.booking.dto.auth.AuthResponseDto;
 import com.cinema.booking.dto.auth.RegisterResponseDto;
+import com.cinema.booking.dto.users.UserResponseDto;
 
 public interface AuthService {
 
@@ -15,6 +16,8 @@ public interface AuthService {
     AuthResponseDto login(LoginRequestDto dto);
 
     AuthResponseDto refresh(RefreshTokenRequestDto dto);
+
+    UserResponseDto getCurrentUser();
 
     LogoutResponseDto logout(String authorizationHeader, LogoutRequestDto dto);
 }

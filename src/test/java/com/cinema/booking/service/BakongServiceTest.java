@@ -15,6 +15,8 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,6 +35,8 @@ class BakongServiceTest {
 
     private static final String BASE_URL = "https://api-bakong.nbc.gov.kh";
     private static final String LIVE_TOKEN = "live-token";
+    private static final String VALID_MD5 = "abcdef1234567890abcdef1234567890";
+    private static final String MOCK_PAID_MD5 = "deadbeefdeadbeefdeadbeefdeadbeef";
 
     private KhqrConfig khqrConfig;
     private BakongServiceImpl bakongService;
@@ -143,9 +147,9 @@ class BakongServiceTest {
     }
 
     @Test
-    @DisplayName("Mock checkTransactionByMd5 should return PAID only for the explicit mock prefix")
+    @DisplayName("Mock checkTransactionByMd5 should return PAID only for the configured mock MD5")
     void testCheckTransactionMockPaidPrefix() {
-        BakongCheckResult result = bakongService.checkTransactionByMd5("MOCK_PAID_1234567890abcdef");
+        BakongCheckResult result = bakongService.checkTransactionByMd5(MOCK_PAID_MD5);
 
         assertNotNull(result);
         assertTrue(result.paid());
@@ -153,19 +157,19 @@ class BakongServiceTest {
     }
 
     @Test
-    @DisplayName("Mock checkTransactionByMd5 should not treat contains-PAID strings as paid")
+    @DisplayName("Invalid MD5 should be rejected before mock status matching")
     void testCheckTransactionMockContainsPaidButNotPrefix() {
         BakongCheckResult result = bakongService.checkTransactionByMd5("order-PAID-123456");
 
         assertNotNull(result);
         assertFalse(result.paid());
-        assertEquals("PENDING", result.status());
+        assertEquals("FAILED", result.status());
     }
 
     @Test
     @DisplayName("Mock checkTransactionByMd5 should return PENDING for normal mock hash")
     void testCheckTransactionMockPending() {
-        BakongCheckResult result = bakongService.checkTransactionByMd5("random_md5_hash_12345");
+        BakongCheckResult result = bakongService.checkTransactionByMd5(VALID_MD5);
 
         assertNotNull(result);
         assertFalse(result.paid());
@@ -186,7 +190,7 @@ class BakongServiceTest {
     }
 
     @Test
-    @DisplayName("Production mode must not treat the mock paid prefix as real payment")
+    @DisplayName("Production mode must not use mock payment matching")
     void testCheckTransactionProductionIgnoresMockPrefix() {
         khqrConfig.setMockMode(false);
         khqrConfig.setToken(LIVE_TOKEN);
@@ -199,10 +203,10 @@ class BakongServiceTest {
         server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header("Authorization", "Bearer " + LIVE_TOKEN))
-                .andExpect(content().json("{\"md5\":\"MOCK_PAID_1234567890\"}"))
+                .andExpect(content().json("{\"md5\":\"" + MOCK_PAID_MD5 + "\"}"))
                 .andRespond(withSuccess("{\"responseCode\":1,\"responseMessage\":\"Pending\"}", MediaType.APPLICATION_JSON));
 
-        BakongCheckResult result = service.checkTransactionByMd5("MOCK_PAID_1234567890");
+        BakongCheckResult result = service.checkTransactionByMd5(MOCK_PAID_MD5);
 
         server.verify();
         assertNotNull(result);
@@ -221,6 +225,14 @@ class BakongServiceTest {
     }
 
     @Test
+    @DisplayName("Malformed MD5 values should be rejected")
+    void testCheckTransactionMalformedMd5Rejected() {
+        assertEquals("FAILED", bakongService.checkTransactionByMd5("abcdef1234567890").status());
+        assertEquals("FAILED", bakongService.checkTransactionByMd5("abcdef1234567890abcdef123456789g").status());
+        assertEquals("FAILED", bakongService.checkTransactionByMd5(" " + VALID_MD5).status());
+    }
+
+    @Test
     @DisplayName("Live responseCode 0 should be paid")
     void testCheckTransactionLivePaid() {
         khqrConfig.setMockMode(false);
@@ -236,7 +248,7 @@ class BakongServiceTest {
                 .andExpect(header("Authorization", "Bearer " + LIVE_TOKEN))
                 .andExpect(content().json("{\"md5\":\"abcdef1234567890abcdef1234567890\"}"))
                 .andRespond(withSuccess(
-                        "{\"responseCode\":0,\"data\":{\"fromAccountId\":\"from@bakong\",\"toAccountId\":\"cinema@bakong\",\"hash\":\"hash-123\"}}",
+                        "{\"responseCode\":0,\"data\":{\"fromAccountId\":\"from@bakong\",\"toAccountId\":\"cinema@bakong\",\"hash\":\"hash-123\",\"amount\":12.50,\"currency\":\"USD\"}}",
                         MediaType.APPLICATION_JSON));
 
         BakongCheckResult result = service.checkTransactionByMd5("abcdef1234567890abcdef1234567890");
@@ -246,6 +258,68 @@ class BakongServiceTest {
         assertTrue(result.paid());
         assertEquals("PAID", result.status());
         assertEquals("hash-123", result.hash());
+        assertEquals(new BigDecimal("12.5"), result.amount());
+        assertEquals("USD", result.currency());
+    }
+
+    @Test
+    @DisplayName("KHQR expiration should never exceed ten minutes")
+    void testGenerateDynamicKhqrCapsExpirationAtTenMinutes() {
+        khqrConfig.setExpiryMinutes(30);
+        LocalDateTime before = LocalDateTime.now();
+
+        KhqrPayload payload = bakongService.generateDynamicKhqr(
+                new BigDecimal("12.50"), "USD", "TXN-EXPIRY-CAP", "Cinema Booking Test");
+
+        assertTrue(Duration.between(before, payload.expiresAt()).compareTo(Duration.ofMinutes(10)) <= 0);
+        assertTrue(payload.expiresAt().isAfter(before));
+    }
+
+    @Test
+    @DisplayName("Live responseCode 0 with non-null data should be paid")
+    void testCheckTransactionLivePaidWithMinimalData() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(LIVE_TOKEN);
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"md5\":\"" + VALID_MD5 + "\"}"))
+                .andRespond(withSuccess(
+                        "{\"responseCode\":0,\"data\":{}}",
+                        MediaType.APPLICATION_JSON));
+
+        BakongCheckResult result = service.checkTransactionByMd5(VALID_MD5);
+
+        server.verify();
+        assertTrue(result.paid());
+        assertEquals("PAID", result.status());
+    }
+
+    @Test
+    @DisplayName("Live request should trim whitespace from the configured Bakong token")
+    void testCheckTransactionTrimsTokenWhitespace() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(LIVE_TOKEN + "\r\n");
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Authorization", "Bearer " + LIVE_TOKEN))
+                .andRespond(withSuccess(
+                        "{\"responseCode\":0,\"data\":{\"fromAccountId\":\"from@bakong\",\"toAccountId\":\"cinema@bakong\",\"hash\":\"hash-123\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        BakongCheckResult result = service.checkTransactionByMd5("abcdef1234567890abcdef1234567890");
+
+        server.verify();
+        assertTrue(result.paid());
     }
 
     @Test
@@ -269,6 +343,30 @@ class BakongServiceTest {
         assertNotNull(result);
         assertFalse(result.paid());
         assertEquals("PENDING", result.status());
+    }
+
+    @Test
+    @DisplayName("Live unknown MD5 must not be treated as paid")
+    void testCheckTransactionLiveUnknownMd5() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(LIVE_TOKEN);
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"md5\":\"abcdef1234567890abcdef1234567890\"}"))
+                .andRespond(withSuccess(
+                        "{\"responseCode\":1,\"responseMessage\":\"Transaction not found\"}",
+                        MediaType.APPLICATION_JSON));
+
+        BakongCheckResult result = service.checkTransactionByMd5("abcdef1234567890abcdef1234567890");
+
+        server.verify();
+        assertFalse(result.paid());
+        assertEquals("NOT_FOUND", result.status());
     }
 
     @Test

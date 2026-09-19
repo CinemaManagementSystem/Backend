@@ -9,12 +9,9 @@ import java.time.LocalDateTime;
 @Data
 public class BookingRequestDto {
 
-    @NotNull
-
     private LocalDateTime bookedAt;
-    @NotBlank
     private String bookingCode;
-    @NotNull @Positive
+    // Kept for request compatibility. The service always recalculates this value from booking seats.
     private BigDecimal totalAmount;
     @NotNull
     private Long customerId;

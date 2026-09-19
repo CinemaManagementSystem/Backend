@@ -4,6 +4,7 @@ import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 public interface BakongService {
 
@@ -18,6 +19,9 @@ public interface BakongService {
     KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description);
 
     KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description, String accountId, String merchantName);
+
+    KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description,
+                                    String accountId, String merchantName, LocalDateTime expiresAt);
 
     /**
      * Checks the transaction status on Bakong network by its MD5 hash.

@@ -13,8 +13,10 @@ import com.cinema.booking.enums.Role;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.exception.UserAlreadyExistsException;
 import com.cinema.booking.security.AuthTokenService;
+import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.repository.UserRepository;
 import com.cinema.booking.security.JwtService;
+import com.cinema.booking.mapper.UserMapper;
 import com.cinema.booking.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -37,6 +39,8 @@ public class AuthServiceImpl implements AuthService {
     private final AuthTokenService authTokenService;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
+    private final AuthorizationService authorizationService;
+    private final UserMapper userMapper;
 
     @Override
     @Transactional
@@ -110,6 +114,12 @@ public class AuthServiceImpl implements AuthService {
 
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername() != null ? user.getUsername() : user.getEmail());
         return buildAuthResponse(userDetails, user, result.refreshToken());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserResponseDto getCurrentUser() {
+        return userMapper.toResponseDto(authorizationService.getCurrentUser());
     }
 
     @Override

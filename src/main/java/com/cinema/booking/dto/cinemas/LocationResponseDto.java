@@ -7,7 +7,6 @@ import java.math.BigDecimal;
 public class LocationResponseDto {
 
     private Long id;
-
     private String address;
     private String city;
     private String googleMapsUrl;

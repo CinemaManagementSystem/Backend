@@ -37,12 +37,14 @@ public class BakongServiceImpl implements BakongService {
     private static final String DEFAULT_MERCHANT_CITY = "Phnom Penh";
     private static final String DEFAULT_STORE_LABEL = "Cinema Booking";
     private static final String TERMINAL_LABEL = "POS-01";
-    private static final String MOCK_PAID_PREFIX = "MOCK_PAID_";
+    private static final String MOCK_PAID_MD5 = "deadbeefdeadbeefdeadbeefdeadbeef";
     private static final String GENERATION_ERROR_MESSAGE = "Failed to generate KHQR";
     private static final String CONFIGURATION_ERROR_MESSAGE = "Payment service is not configured";
     private static final String LIVE_CHECK_ERROR_MESSAGE = "Unable to verify payment at this time";
     private static final String INCOMPLETE_RESPONSE_MESSAGE = "Incomplete Bakong response";
-    private static final int DEFAULT_EXPIRY_MINUTES = 10;
+    private static final String INVALID_MD5_MESSAGE = "Invalid KHQR MD5 hash";
+    private static final int DEFAULT_EXPIRY_MINUTES = 5;
+    private static final int MAX_EXPIRY_MINUTES = 10;
     private static final int MAX_BILL_NUMBER_LENGTH = 25;
     private static final int MAX_STORE_LABEL_LENGTH = 25;
 
@@ -56,6 +58,13 @@ public class BakongServiceImpl implements BakongService {
 
     @Override
     public KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description, String customAccountId, String customMerchantName) {
+        return generateDynamicKhqr(amount, currency, billNumber, description,
+                customAccountId, customMerchantName, null);
+    }
+
+    @Override
+    public KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description,
+                                           String customAccountId, String customMerchantName, LocalDateTime requestedExpiresAt) {
         validateAmount(amount);
 
         String accountId = resolveAccountId(customAccountId);
@@ -65,8 +74,15 @@ public class BakongServiceImpl implements BakongService {
         KHQRCurrency khqrCurrency = "KHR".equals(normalizedCurrency) ? KHQRCurrency.KHR : KHQRCurrency.USD;
         String bill = normalizeLabel(billNumber, "BILL-" + System.currentTimeMillis(), MAX_BILL_NUMBER_LENGTH);
         String storeLabel = normalizeLabel(description, DEFAULT_STORE_LABEL, MAX_STORE_LABEL_LENGTH);
-        int expiryMinutes = resolveExpiryMinutes();
-        long expirationEpochMillis = System.currentTimeMillis() + ((long) expiryMinutes * 60_000L);
+        LocalDateTime now = LocalDateTime.now(PHNOM_PENH_ZONE);
+        LocalDateTime configuredExpiry = now.plusMinutes(resolveExpiryMinutes());
+        LocalDateTime expiresAt = requestedExpiresAt != null && requestedExpiresAt.isBefore(configuredExpiry)
+                ? requestedExpiresAt
+                : configuredExpiry;
+        if (!expiresAt.isAfter(now)) {
+            throw new IllegalArgumentException("KHQR expiry must be in the future");
+        }
+        long expirationEpochMillis = expiresAt.atZone(PHNOM_PENH_ZONE).toInstant().toEpochMilli();
 
         log.info("Generating KHQR: amount={}, currency={}, billNumber={}", amount, normalizedCurrency, bill);
 
@@ -101,7 +117,7 @@ public class BakongServiceImpl implements BakongService {
         String khqrString = khqrData.getQr();
         String md5Hash = khqrData.getMd5();
 
-        if (!hasText(khqrString) || !hasText(md5Hash)) {
+        if (!hasText(khqrString) || !isValidMd5(md5Hash)) {
             log.error("Bakong KHQR SDK returned incomplete QR data");
             throw new IllegalStateException(GENERATION_ERROR_MESSAGE);
         }
@@ -117,9 +133,7 @@ public class BakongServiceImpl implements BakongService {
         }
 
         // Application-level timeout in Asia/Phnom_Penh timezone
-        LocalDateTime expiresAt = LocalDateTime.now(PHNOM_PENH_ZONE).plusMinutes(expiryMinutes);
-
-        log.info("Generated KHQR MD5: {}", md5Hash);
+        log.info("Generated KHQR MD5: {}", maskHash(md5Hash));
         log.info("Application payment expiry: {}", expiresAt);
 
         return new KhqrPayload(khqrString, md5Hash, expiresAt, amount, normalizedCurrency, bill);
@@ -127,15 +141,16 @@ public class BakongServiceImpl implements BakongService {
 
     @Override
     public BakongCheckResult checkTransactionByMd5(String md5Hash) {
-        if (!hasText(md5Hash)) {
-            return BakongCheckResult.failed(md5Hash, "Invalid or missing MD5 hash");
+        if (!isValidMd5(md5Hash)) {
+            log.warn("Rejected Bakong MD5 check because the hash format is invalid: md5={}", maskHash(md5Hash));
+            return BakongCheckResult.failed(md5Hash, INVALID_MD5_MESSAGE);
         }
 
-        String normalizedMd5 = md5Hash.trim();
+        String normalizedMd5 = md5Hash;
 
         if (khqrConfig.isMockMode()) {
-            log.debug("Bakong running in mock mode for MD5 check: {}", md5Hash);
-            if (normalizedMd5.startsWith(MOCK_PAID_PREFIX)) {
+            log.debug("Bakong running in mock mode for MD5 check: {}", maskHash(normalizedMd5));
+            if (MOCK_PAID_MD5.equalsIgnoreCase(normalizedMd5)) {
                 return BakongCheckResult.paid(normalizedMd5, "mock_customer@bakong", khqrConfig.getAccountId());
             }
             return BakongCheckResult.pending(normalizedMd5, "Transaction is pending in mock mode");
@@ -151,51 +166,55 @@ public class BakongServiceImpl implements BakongService {
             String url = khqrConfig.getBaseUrl() + "/v1/check_transaction_by_md5";
             Map<?, ?> response = createRestClient().post()
                     .uri(url)
-                    .header("Authorization", "Bearer " + khqrConfig.getToken())
+                    .header("Authorization", "Bearer " + khqrConfig.getToken().trim())
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("md5", normalizedMd5))
                     .retrieve()
                     .body(Map.class);
 
             if (response == null) {
-                log.warn("Bakong API returned an empty response for MD5 {}", normalizedMd5);
+                log.warn("Bakong API returned an empty response for MD5 {}", maskHash(normalizedMd5));
                 return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
             }
 
             Object responseCode = response.get("responseCode");
+            String responseMessage = asString(response.get("responseMessage"));
+            log.debug("Bakong API response: md5={}, responseCode={}, responseMessage={}",
+                    maskHash(normalizedMd5), responseCode, responseMessage);
             if (isSuccessResponse(responseCode)) {
                 Map<?, ?> dataMap = asMap(response.get("data"));
                 if (dataMap == null) {
-                    log.warn("Bakong API success response for MD5 {} did not include payment data", normalizedMd5);
+                    log.warn("Bakong API success response for MD5 {} did not include payment data", maskHash(normalizedMd5));
                     return BakongCheckResult.pending(normalizedMd5, INCOMPLETE_RESPONSE_MESSAGE);
                 }
 
                 String fromAccount = asString(dataMap.get("fromAccountId"));
                 String toAccount = asString(dataMap.get("toAccountId"));
                 String hash = asString(dataMap.get("hash"));
+                BigDecimal amount = asBigDecimal(dataMap.get("amount"));
+                String currency = asString(dataMap.get("currency"));
 
-                if (!hasText(fromAccount) || !hasText(toAccount) || !hasText(hash)) {
-                    log.warn("Bakong API success response for MD5 {} was missing required payment data", normalizedMd5);
-                    return BakongCheckResult.pending(normalizedMd5, INCOMPLETE_RESPONSE_MESSAGE);
-                }
-
-                log.info("Bakong transaction confirmed for MD5 {}", normalizedMd5);
-                return BakongCheckResult.paid(hash, fromAccount, toAccount);
+                log.info("Bakong transaction confirmed for MD5 {}", maskHash(normalizedMd5));
+                return BakongCheckResult.paid(hash, fromAccount, toAccount, amount, currency);
             }
 
-            String message = asString(response.get("responseMessage"));
-            return BakongCheckResult.pending(normalizedMd5, hasText(message) ? message : "Pending");
+            if (isNotFoundResponse(responseMessage)) {
+                return BakongCheckResult.notFound(normalizedMd5);
+            }
+
+            return BakongCheckResult.pending(normalizedMd5,
+                    hasText(responseMessage) ? responseMessage : "Pending");
         } catch (RestClientResponseException ex) {
             log.warn("Bakong API returned an error while checking MD5 {}: status={}, message={}",
-                    normalizedMd5, ex.getStatusCode(), ex.getMessage());
+                    maskHash(normalizedMd5), ex.getStatusCode(), ex.getMessage());
             return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         } catch (RestClientException ex) {
             log.warn("Failed to check Bakong transaction by MD5 {} from live API: {}",
-                    normalizedMd5, ex.getMessage());
+                    maskHash(normalizedMd5), ex.getMessage());
             return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         } catch (Exception ex) {
             log.warn("Unexpected failure while checking Bakong transaction by MD5 {}: {}",
-                    normalizedMd5, ex.getMessage());
+                    maskHash(normalizedMd5), ex.getMessage());
             return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         }
     }
@@ -241,7 +260,8 @@ public class BakongServiceImpl implements BakongService {
 
     private int resolveExpiryMinutes() {
         int expiryMinutes = khqrConfig.getExpiryMinutes();
-        return expiryMinutes > 0 ? expiryMinutes : DEFAULT_EXPIRY_MINUTES;
+        int positiveExpiry = expiryMinutes > 0 ? expiryMinutes : DEFAULT_EXPIRY_MINUTES;
+        return Math.min(positiveExpiry, MAX_EXPIRY_MINUTES);
     }
 
     private String normalizeLabel(String value, String fallback, int maxLength) {
@@ -274,7 +294,10 @@ public class BakongServiceImpl implements BakongService {
     }
 
     private boolean isSuccessResponse(Object responseCode) {
-        return responseCode instanceof Number number && number.intValue() == 0;
+        if (responseCode instanceof Number number) {
+            return number.intValue() == 0;
+        }
+        return responseCode != null && "0".equals(responseCode.toString().trim());
     }
 
     private Map<?, ?> asMap(Object value) {
@@ -293,8 +316,44 @@ public class BakongServiceImpl implements BakongService {
         return value != null && !value.isBlank();
     }
 
+    private BigDecimal asBigDecimal(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(value.toString().trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private boolean isValidMd5(String value) {
+        return value != null && value.matches("[0-9a-fA-F]{32}");
+    }
+
+    private boolean isNotFoundResponse(String responseMessage) {
+        if (!hasText(responseMessage)) {
+            return false;
+        }
+        String normalizedMessage = responseMessage.toLowerCase(Locale.ROOT);
+        return normalizedMessage.contains("not found")
+                || normalizedMessage.contains("not exist")
+                || normalizedMessage.contains("no transaction");
+    }
+
     private String safeStatusMessage(String message) {
         return hasText(message) ? message : "Unknown error during KHQR generation";
+    }
+
+    private String maskHash(String hash) {
+        if (!hasText(hash)) {
+            return "<missing>";
+        }
+        String normalized = hash.trim();
+        if (normalized.length() <= 8) {
+            return "****";
+        }
+        return normalized.substring(0, 4) + "..." + normalized.substring(normalized.length() - 4);
     }
 
     public static String calculateCrc16(String input) {

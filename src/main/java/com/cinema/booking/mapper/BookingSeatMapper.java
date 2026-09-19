@@ -17,6 +17,7 @@ public class BookingSeatMapper {
         dto.setId(bookingSeat.getId());
         dto.setPrice(bookingSeat.getPrice());
         dto.setStatus(bookingSeat.getStatus());
+        dto.setExpiresAt(bookingSeat.getExpiresAt());
         dto.setBookingId(bookingSeat.getBooking() != null ? bookingSeat.getBooking().getId() : null);
         dto.setSeatId(bookingSeat.getSeat() != null ? bookingSeat.getSeat().getId() : null);
         return dto;
