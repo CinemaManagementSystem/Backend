@@ -16,7 +16,6 @@ public class MovieRequestDto {
     private String genre;
     @NotBlank
     private String language;
-    @NotBlank
     private String posterUrl;
     @NotNull
     private LocalDate releaseDate;

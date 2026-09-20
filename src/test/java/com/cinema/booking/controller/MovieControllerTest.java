@@ -7,6 +7,7 @@ import com.cinema.booking.enums.Role;
 import com.cinema.booking.repository.MovieRepository;
 import com.cinema.booking.repository.UserRepository;
 import com.cinema.booking.security.JwtService;
+import com.cinema.booking.service.CloudinaryService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,11 +23,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -54,6 +59,9 @@ public class MovieControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @org.springframework.boot.test.mock.mockito.MockBean
+    private CloudinaryService cloudinaryService;
+
     private User testUser;
     private User testAdmin;
     private String userToken;
@@ -62,6 +70,11 @@ public class MovieControllerTest {
 
     @BeforeEach
     void setUp() {
+        when(cloudinaryService.uploadUrl(anyString(), eq("Cinema_Project/movie")))
+                .thenReturn(Map.of(
+                        "secure_url", "https://res.cloudinary.com/test/image/upload/movie/poster.jpg",
+                        "public_id", "Cinema_Project/movie/poster"
+                ));
         movieRepository.deleteAllInBatch();
         userRepository.deleteAllInBatch();
 

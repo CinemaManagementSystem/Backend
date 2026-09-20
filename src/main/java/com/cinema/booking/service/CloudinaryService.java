@@ -26,10 +26,14 @@ public class CloudinaryService {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> upload(MultipartFile file) {
+        return upload(file, "Cinema_Project/product");
+    }
+
+    public Map<String, Object> upload(MultipartFile file, String folder) {
         try {
             Map<String, Object> result = cloudinary.uploader().upload(file.getBytes(),
                     ObjectUtils.asMap(
-                            "folder", "Cinema_Project/product",
+                            "folder", folder,
                             "resource_type", "image"
                     ));
             log.info("Image uploaded to Cloudinary: publicId={}", result.get("public_id"));
@@ -37,6 +41,26 @@ public class CloudinaryService {
         } catch (IOException e) {
             log.error("Failed to upload image to Cloudinary", e);
             throw new RuntimeException("Failed to upload image to Cloudinary: " + e.getMessage(), e);
+        }
+    }
+
+    /** Imports a remote HTTP(S) image into Cloudinary. */
+    public Map<String, Object> uploadUrl(String imageUrl, String folder) {
+        if (imageUrl == null || imageUrl.isBlank()
+                || !(imageUrl.startsWith("https://") || imageUrl.startsWith("http://"))) {
+            throw new IllegalArgumentException("Poster URL must be a valid HTTP or HTTPS URL");
+        }
+        try {
+            Map<String, Object> result = cloudinary.uploader().upload(imageUrl.trim(),
+                    ObjectUtils.asMap(
+                            "folder", folder,
+                            "resource_type", "image"
+                    ));
+            log.info("Remote image imported to Cloudinary: publicId={}", result.get("public_id"));
+            return result;
+        } catch (IOException e) {
+            log.error("Failed to import remote image to Cloudinary", e);
+            throw new RuntimeException("Failed to import image to Cloudinary: " + e.getMessage(), e);
         }
     }
 
