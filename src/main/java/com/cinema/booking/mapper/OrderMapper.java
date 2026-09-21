@@ -16,8 +16,9 @@ public class OrderMapper {
         order.setOrderedAt(dto.getOrderedAt());
         order.setStatus(dto.getStatus());
         order.setSubtotal(dto.getSubtotal());
+        order.setDiscountAmount(dto.getDiscountAmount());
         order.setTotalAmount(dto.getTotalAmount());
-        // TODO: FK fields (booking, customer) are resolved in the Service layer
+        // TODO: FK fields (booking, customer, promotion) are resolved in the Service layer
         // using their respective repositories, then set on order before saving.
         return order;
     }
@@ -31,7 +32,9 @@ public class OrderMapper {
         dto.setOrderedAt(order.getOrderedAt());
         dto.setStatus(order.getStatus());
         dto.setSubtotal(order.getSubtotal());
+        dto.setDiscountAmount(order.getDiscountAmount());
         dto.setTotalAmount(order.getTotalAmount());
+        dto.setPromotionId(order.getPromotion() != null ? order.getPromotion().getId() : null);
         dto.setBookingId(order.getBooking() != null ? order.getBooking().getId() : null);
         dto.setCustomerId(order.getCustomer() != null ? order.getCustomer().getId() : null);
         return dto;

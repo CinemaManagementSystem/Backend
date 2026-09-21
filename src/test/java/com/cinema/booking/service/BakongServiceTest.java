@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -29,6 +30,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class BakongServiceTest {
@@ -164,6 +166,8 @@ class BakongServiceTest {
         assertNotNull(result);
         assertFalse(result.paid());
         assertEquals("FAILED", result.status());
+        assertFalse(result.authoritative());
+        assertFalse(result.retryable());
     }
 
     @Test
@@ -177,7 +181,7 @@ class BakongServiceTest {
     }
 
     @Test
-    @DisplayName("Production mode with missing Bakong token must fail closed")
+    @DisplayName("Production mode with missing Bakong token must be retryable and non-authoritative")
     void testCheckTransactionProductionMissingTokenFailsClosed() {
         khqrConfig.setMockMode(false);
         khqrConfig.setToken(" ");
@@ -186,7 +190,9 @@ class BakongServiceTest {
 
         assertNotNull(result);
         assertFalse(result.paid());
-        assertEquals("FAILED", result.status());
+        assertEquals("VERIFICATION_ERROR", result.status());
+        assertFalse(result.authoritative());
+        assertTrue(result.retryable());
     }
 
     @Test
@@ -222,6 +228,8 @@ class BakongServiceTest {
         assertNotNull(result);
         assertFalse(result.paid());
         assertEquals("FAILED", result.status());
+        assertFalse(result.authoritative());
+        assertFalse(result.retryable());
     }
 
     @Test
@@ -364,8 +372,9 @@ class BakongServiceTest {
 
         server.verify();
         assertFalse(result.paid());
-        assertEquals("FAILED", result.status());
+        assertEquals("VERIFICATION_ERROR", result.status());
         assertFalse(result.authoritative());
+        assertTrue(result.retryable());
     }
 
     @Test
@@ -416,7 +425,7 @@ class BakongServiceTest {
     }
 
     @Test
-    @DisplayName("Live API errors should fail closed without exposing internal details")
+    @DisplayName("Live API errors should be retryable without exposing internal details")
     void testCheckTransactionLiveApiException() {
         khqrConfig.setMockMode(false);
         khqrConfig.setToken(LIVE_TOKEN);
@@ -435,8 +444,37 @@ class BakongServiceTest {
         server.verify();
         assertNotNull(result);
         assertFalse(result.paid());
-        assertEquals("FAILED", result.status());
+        assertEquals("VERIFICATION_ERROR", result.status());
         assertEquals("Unable to verify payment at this time", result.message());
+        assertFalse(result.authoritative());
+        assertTrue(result.retryable());
+    }
+
+    @Test
+    @DisplayName("Live 401 response should retry once before returning result")
+    void testCheckTransactionLiveUnauthorizedRetriesOnce() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(LIVE_TOKEN);
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        server.expect(requestTo(BASE_URL + "/v1/check_transaction_by_md5"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(
+                        "{\"responseCode\":0,\"data\":{\"fromAccountId\":\"from@bakong\",\"toAccountId\":\"cinema@bakong\",\"hash\":\"hash-after-retry\",\"amount\":12.50,\"currency\":\"USD\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        BakongCheckResult result = service.checkTransactionByMd5("abcdef1234567890abcdef1234567890");
+
+        server.verify();
+        assertTrue(result.paid());
+        assertEquals("PAID", result.status());
+        assertEquals("hash-after-retry", result.hash());
     }
 
     @Test

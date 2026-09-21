@@ -36,6 +36,9 @@ public class Order {
     @Column(name = "subtotal", nullable = false)
     private BigDecimal subtotal;
 
+    @Column(name = "discount_amount", precision = 12, scale = 2)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
     @Column(name = "total_amount", nullable = false)
     private BigDecimal totalAmount;
 
@@ -46,5 +49,9 @@ public class Order {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id", nullable = false)
     private User customer;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "promotion_id")
+    private Promotion promotion;
 
 }

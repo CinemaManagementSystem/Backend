@@ -17,6 +17,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
@@ -33,6 +34,19 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.NOT_FOUND.value())
                 .error(HttpStatus.NOT_FOUND.getReasonPhrase())
                 .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.NOT_FOUND);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException ex, HttpServletRequest request) {
+        log.warn("Endpoint not found on path [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.NOT_FOUND.value())
+                .error(HttpStatus.NOT_FOUND.getReasonPhrase())
+                .message("Endpoint not found")
                 .path(request.getRequestURI())
                 .build();
         return new ResponseEntity<>(errorResponse, HttpStatus.NOT_FOUND);

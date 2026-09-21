@@ -25,7 +25,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/admin/memberships")
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('ADMIN', 'STAFF')")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminMembershipController {
 
     private final MembershipService membershipService;

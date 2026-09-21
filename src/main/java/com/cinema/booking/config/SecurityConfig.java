@@ -124,6 +124,7 @@ public class SecurityConfig {
                 ).permitAll();
 
                 // Admin-only management endpoints
+                auth.requestMatchers("/api/admin/memberships/**").hasRole("ADMIN");
                 auth.requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "STAFF");
                 auth.requestMatchers("/api/users/**").hasRole("ADMIN");
                 auth.requestMatchers(HttpMethod.DELETE, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/locations/**").hasRole("ADMIN");

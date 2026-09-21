@@ -460,9 +460,10 @@ public class PaymentServiceImpl implements PaymentService {
                     payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
                     maskHash(payment.getMd5Hash()));
             result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
-            log.debug("Bakong status result: paymentId={}, bookingId={}, transactionId={}, md5={}, status={}, authoritative={}",
+            log.debug("Bakong status result: paymentId={}, bookingId={}, transactionId={}, md5={}, status={}, authoritative={}, retryable={}",
                     payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
-                    payment.getTransactionId(), maskHash(payment.getMd5Hash()), result.status(), result.authoritative());
+                    payment.getTransactionId(), maskHash(payment.getMd5Hash()), result.status(), result.authoritative(),
+                    result.retryable());
             if (result.paid()) {
                 if (!isValidBakongConfirmation(payment, result)) {
                     log.warn("Bakong confirmation validation failed; payment remains unconfirmed: paymentId={}, bookingId={}, transactionId={}, md5={}",
@@ -490,10 +491,11 @@ public class PaymentServiceImpl implements PaymentService {
             if (result != null && result.authoritative() && !result.paid()) {
                 return expirePaymentInternal(payment);
             }
-            // A transport/configuration failure is not proof that the
+            // A transport/configuration/token failure is not proof that the
             // customer did not pay. Keep PENDING and let polling retry.
-            log.warn("Bakong check was inconclusive after expiry; keeping payment PENDING: paymentId={}, md5={}",
-                    payment.getId(), maskHash(payment.getMd5Hash()));
+            log.warn("Bakong check was inconclusive after expiry; keeping payment PENDING: paymentId={}, md5={}, status={}, retryable={}",
+                    payment.getId(), maskHash(payment.getMd5Hash()), result != null ? result.status() : null,
+                    result != null && result.retryable());
         }
 
         return paymentMapper.toResponseDto(payment);

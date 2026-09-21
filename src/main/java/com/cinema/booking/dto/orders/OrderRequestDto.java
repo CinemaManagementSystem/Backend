@@ -22,8 +22,11 @@ public class OrderRequestDto {
     private String status;
     @NotNull @Positive
     private BigDecimal subtotal;
+    @PositiveOrZero
+    private BigDecimal discountAmount;
     @NotNull @Positive
     private BigDecimal totalAmount;
+    private Long promotionId;
     @NotNull
     private Long bookingId;
     @NotNull

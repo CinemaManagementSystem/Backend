@@ -48,6 +48,7 @@ public class BakongServiceImpl implements BakongService {
     private static final int EXPIRY_SAFETY_SECONDS = 1;
     private static final int MAX_BILL_NUMBER_LENGTH = 25;
     private static final int MAX_STORE_LABEL_LENGTH = 25;
+    private static final int MAX_LIVE_CHECK_ATTEMPTS = 2;
 
     private final KhqrConfig khqrConfig;
     private final RestClient restClient = RestClient.builder().build();
@@ -162,19 +163,32 @@ public class BakongServiceImpl implements BakongService {
 
         if (!hasText(khqrConfig.getToken())) {
             log.error("Bakong API token is not configured");
-            return BakongCheckResult.failed(normalizedMd5, CONFIGURATION_ERROR_MESSAGE);
+            return BakongCheckResult.verificationError(normalizedMd5, CONFIGURATION_ERROR_MESSAGE);
         }
 
         // Live Bakong Open API call
         try {
             String url = khqrConfig.getBaseUrl() + "/v1/check_transaction_by_md5";
-            Map<?, ?> response = createRestClient().post()
-                    .uri(url)
-                    .header("Authorization", "Bearer " + khqrConfig.getToken().trim())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("md5", normalizedMd5))
-                    .retrieve()
-                    .body(Map.class);
+            Map<?, ?> response = null;
+            for (int attempt = 1; attempt <= MAX_LIVE_CHECK_ATTEMPTS; attempt++) {
+                try {
+                    response = createRestClient().post()
+                            .uri(url)
+                            .header("Authorization", "Bearer " + khqrConfig.getToken().trim())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(Map.of("md5", normalizedMd5))
+                            .retrieve()
+                            .body(Map.class);
+                    break;
+                } catch (RestClientResponseException ex) {
+                    if (ex.getStatusCode().value() == 401 && attempt < MAX_LIVE_CHECK_ATTEMPTS) {
+                        log.warn("Bakong API authorization failed while checking MD5 {}; retrying once: status={}",
+                                maskHash(normalizedMd5), ex.getStatusCode());
+                        continue;
+                    }
+                    throw ex;
+                }
+            }
 
             if (response == null) {
                 log.warn("Bakong API returned an empty response for MD5 {}", maskHash(normalizedMd5));
@@ -205,7 +219,7 @@ public class BakongServiceImpl implements BakongService {
             if (isRateLimitedResponse(responseMessage)) {
                 log.warn("Bakong API rate limit reached while checking MD5 {}: {}",
                         maskHash(normalizedMd5), responseMessage);
-                return BakongCheckResult.failed(normalizedMd5, responseMessage);
+                return BakongCheckResult.verificationError(normalizedMd5, responseMessage);
             }
 
             if (isNotFoundResponse(responseMessage)) {
@@ -215,9 +229,9 @@ public class BakongServiceImpl implements BakongService {
             return BakongCheckResult.pending(normalizedMd5,
                     hasText(responseMessage) ? responseMessage : "Pending");
         } catch (RestClientResponseException ex) {
-            log.warn("Bakong API returned an error while checking MD5 {}: status={}, message={}",
-                    maskHash(normalizedMd5), ex.getStatusCode(), ex.getMessage());
-            return BakongCheckResult.failed(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+            log.warn("Bakong API returned a retryable error while checking MD5 {}: status={}, responseBodyPresent={}",
+                    maskHash(normalizedMd5), ex.getStatusCode(), hasText(ex.getResponseBodyAsString()));
+            return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         } catch (RestClientException ex) {
             log.warn("Failed to check Bakong transaction by MD5 {} from live API: {}",
                     maskHash(normalizedMd5), ex.getMessage());

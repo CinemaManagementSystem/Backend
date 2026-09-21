@@ -15,7 +15,9 @@ public class OrderResponseDto {
     private LocalDateTime orderedAt;
     private String status;
     private BigDecimal subtotal;
+    private BigDecimal discountAmount;
     private BigDecimal totalAmount;
+    private Long promotionId;
     private Long bookingId;
     private Long customerId;
 }
