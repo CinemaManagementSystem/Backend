@@ -15,6 +15,7 @@ import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BookingSeatService;
 import com.cinema.booking.service.BookingTotalService;
 import com.cinema.booking.service.BookingService;
+import com.cinema.booking.service.MembershipPricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +38,7 @@ public class BookingSeatServiceImpl implements BookingSeatService {
     private final AuthorizationService authorizationService;
     private final BookingTotalService bookingTotalService;
     private final BookingService bookingService;
+    private final MembershipPricingService membershipPricingService;
 
     @Override
     @Transactional
@@ -54,10 +56,15 @@ public class BookingSeatServiceImpl implements BookingSeatService {
         BookingSeat bookingSeat = bookingSeatMapper.toEntity(dto);
         bookingSeat.setBooking(booking);
         bookingSeat.setSeat(seat);
-        bookingSeat.setPrice(seat.getPrice());
+        applyMembershipTicketSnapshot(bookingSeat, booking.getCustomer(), seat.getPrice());
         bookingSeat.setStatus(DEFAULT_STATUS);
         bookingSeat.setExpiresAt(booking.getExpiresAt());
         bookingSeat = bookingSeatRepository.save(bookingSeat);
+        membershipPricingService.recordUsage(
+                membershipPricingService.calculateTicketPrice(booking.getCustomer(), seat.getPrice()),
+                "BOOKING_SEAT",
+                bookingSeat.getId()
+        );
         bookingTotalService.recalculate(booking);
         return bookingSeatMapper.toResponseDto(bookingSeat);
     }
@@ -92,10 +99,21 @@ public class BookingSeatServiceImpl implements BookingSeatService {
         updated.setId(existing.getId());
         updated.setBooking(booking);
         updated.setSeat(seat);
-        updated.setPrice(resolvePrice(existing, booking, seat));
+        if (isSameSeat(existing, booking, seat)) {
+            copyPricingSnapshot(existing, updated);
+        } else {
+            applyMembershipTicketSnapshot(updated, booking.getCustomer(), seat.getPrice());
+        }
         updated.setStatus(existing.getStatus());
         updated.setExpiresAt(booking.getExpiresAt());
         updated = bookingSeatRepository.save(updated);
+        if (!isSameSeat(existing, booking, seat)) {
+            membershipPricingService.recordUsage(
+                    membershipPricingService.calculateTicketPrice(booking.getCustomer(), seat.getPrice()),
+                    "BOOKING_SEAT",
+                    updated.getId()
+            );
+        }
         bookingTotalService.recalculate(previousBooking);
         if (!previousBooking.getId().equals(booking.getId())) {
             bookingTotalService.recalculate(booking);
@@ -137,14 +155,28 @@ public class BookingSeatServiceImpl implements BookingSeatService {
         }
     }
 
-    private BigDecimal resolvePrice(BookingSeat existing, Booking booking, Seat seat) {
+    private boolean isSameSeat(BookingSeat existing, Booking booking, Seat seat) {
         Long existingSeatId = existing.getSeat() != null ? existing.getSeat().getId() : null;
         Long existingBookingId = existing.getBooking() != null ? existing.getBooking().getId() : null;
-        if (existingSeatId != null && existingSeatId.equals(seat.getId())
-                && existingBookingId != null && existingBookingId.equals(booking.getId())) {
-            return existing.getPrice();
-        }
-        return seat.getPrice();
+        return existingSeatId != null && existingSeatId.equals(seat.getId())
+                && existingBookingId != null && existingBookingId.equals(booking.getId());
+    }
+
+    private void applyMembershipTicketSnapshot(BookingSeat bookingSeat, com.cinema.booking.entity.User customer, BigDecimal basePrice) {
+        MembershipPricingService.PricingResult result = membershipPricingService.calculateTicketPrice(customer, basePrice);
+        bookingSeat.setOriginalPrice(result.originalAmount());
+        bookingSeat.setMembershipDiscountAmount(result.discountAmount());
+        bookingSeat.setMembershipBenefitCode(result.benefitType() != null ? result.benefitType().name() : null);
+        bookingSeat.setUserMembership(result.membership());
+        bookingSeat.setPrice(result.finalAmount());
+    }
+
+    private void copyPricingSnapshot(BookingSeat source, BookingSeat target) {
+        target.setOriginalPrice(source.getOriginalPrice() != null ? source.getOriginalPrice() : source.getPrice());
+        target.setMembershipDiscountAmount(source.getMembershipDiscountAmount() != null ? source.getMembershipDiscountAmount() : BigDecimal.ZERO);
+        target.setMembershipBenefitCode(source.getMembershipBenefitCode());
+        target.setUserMembership(source.getUserMembership());
+        target.setPrice(source.getPrice());
     }
 
     @Override

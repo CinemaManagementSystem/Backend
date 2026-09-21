@@ -63,4 +63,8 @@ public class Payment {
     @JoinColumn(name = "order_id", nullable = true)
     private Order order;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_membership_id", nullable = true)
+    private UserMembership userMembership;
+
 }

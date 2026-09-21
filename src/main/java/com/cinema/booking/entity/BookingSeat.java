@@ -21,6 +21,15 @@ public class BookingSeat {
     @Column(name = "price", nullable = false)
     private BigDecimal price;
 
+    @Column(name = "original_price")
+    private BigDecimal originalPrice;
+
+    @Column(name = "membership_discount_amount")
+    private BigDecimal membershipDiscountAmount = BigDecimal.ZERO;
+
+    @Column(name = "membership_benefit_code")
+    private String membershipBenefitCode;
+
     @Column(name = "status", nullable = false)
     private String status;
 
@@ -35,5 +44,9 @@ public class BookingSeat {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "seat_id", nullable = false)
     private Seat seat;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_membership_id")
+    private UserMembership userMembership;
 
 }

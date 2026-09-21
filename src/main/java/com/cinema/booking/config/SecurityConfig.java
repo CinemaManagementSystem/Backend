@@ -119,10 +119,12 @@ public class SecurityConfig {
                         "/api/shows/**",
                         "/api/locations/**",
                         "/api/theaters/**",
-                        "/api/movie-category/**"
+                        "/api/movie-category/**",
+                        "/api/memberships/plans"
                 ).permitAll();
 
                 // Admin-only management endpoints
+                auth.requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "STAFF");
                 auth.requestMatchers("/api/users/**").hasRole("ADMIN");
                 auth.requestMatchers(HttpMethod.DELETE, "/api/movies/**", "/api/theaters/**", "/api/screens/**", "/api/seats/**", "/api/locations/**").hasRole("ADMIN");
 

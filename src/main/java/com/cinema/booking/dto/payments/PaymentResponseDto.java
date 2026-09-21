@@ -32,7 +32,9 @@ public record PaymentResponseDto(
 
         Long customerId,
 
-        Long orderId
+        Long orderId,
+
+        java.util.UUID userMembershipId
 
 ) {
 }

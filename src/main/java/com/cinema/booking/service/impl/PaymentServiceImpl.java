@@ -13,7 +13,9 @@ import com.cinema.booking.entity.Order;
 import com.cinema.booking.entity.Payment;
 import com.cinema.booking.entity.PaymentTransaction;
 import com.cinema.booking.entity.User;
+import com.cinema.booking.entity.UserMembership;
 import com.cinema.booking.enums.BookingStatus;
+import com.cinema.booking.enums.MembershipStatus;
 import com.cinema.booking.enums.PaymentMethod;
 import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
@@ -24,6 +26,7 @@ import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
 import com.cinema.booking.repository.SeatRepository;
+import com.cinema.booking.repository.UserMembershipRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BakongService;
 import com.cinema.booking.service.BookingTotalService;
@@ -56,6 +59,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final BookingSeatRepository bookingSeatRepository;
     private final SeatRepository seatRepository;
     private final OrderRepository orderRepository;
+    private final UserMembershipRepository userMembershipRepository;
     private final BakongService bakongService;
     private final BookingTotalService bookingTotalService;
     private final BookingService bookingService;
@@ -93,6 +97,20 @@ public class PaymentServiceImpl implements PaymentService {
             }
         }
 
+        UserMembership userMembership = null;
+        if (dto.userMembershipId() != null) {
+            if (booking != null || order != null) {
+                throw new IllegalArgumentException("Membership payments cannot be mixed with booking or order payments");
+            }
+            userMembership = userMembershipRepository.findByIdForUpdate(dto.userMembershipId())
+                    .orElseThrow(() -> new ResourceNotFoundException("UserMembership", dto.userMembershipId()));
+            authorizationService.requireOwnerOrStaff(userMembership.getCustomer());
+            ensureSameCustomer(customer, userMembership.getCustomer(), "Membership");
+            if (userMembership.getStatus() != MembershipStatus.PENDING_PAYMENT) {
+                throw new IllegalStateException("Only pending memberships can be paid");
+            }
+        }
+
         PaymentMethod method = dto.paymentMethod();
         BigDecimal expectedAmount = BigDecimal.ZERO;
         if (booking != null) {
@@ -105,10 +123,19 @@ public class PaymentServiceImpl implements PaymentService {
         if (order != null) {
             expectedAmount = expectedAmount.add(bookingTotalService.recalculateOrder(order));
         }
+        if (userMembership != null) {
+            expectedAmount = userMembership.getPriceSnapshot();
+            if (method != PaymentMethod.KHQR) {
+                throw new IllegalArgumentException("Membership subscriptions must be paid by KHQR");
+            }
+        }
         if (booking != null || order != null) {
             if (dto.amount().compareTo(expectedAmount) != 0) {
                 throw new IllegalArgumentException("Payment amount must match the current booking/order total: " + expectedAmount);
             }
+        }
+        if (userMembership != null && dto.amount().compareTo(expectedAmount) != 0) {
+            throw new IllegalArgumentException("Payment amount must match the membership plan price: " + expectedAmount);
         }
 
         BigDecimal amount = dto.amount();
@@ -129,6 +156,19 @@ public class PaymentServiceImpl implements PaymentService {
                 }
             }
         }
+        if (payment == null && userMembership != null) {
+            List<Payment> pendingPayments = paymentRepository.findByUserMembershipIdAndStatusOrderByIdAsc(
+                    userMembership.getId(), PaymentStatus.PENDING);
+            if (!pendingPayments.isEmpty()) {
+                payment = pendingPayments.get(0);
+                markPendingAttemptFailed(payment);
+                for (Payment duplicate : pendingPayments.subList(1, pendingPayments.size())) {
+                    duplicate.setStatus(PaymentStatus.FAILED);
+                    paymentRepository.save(duplicate);
+                    markPendingAttemptFailed(duplicate);
+                }
+            }
+        }
         if (payment == null) {
             payment = paymentMapper.toEntity(dto);
         }
@@ -136,6 +176,7 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setCustomer(customer);
         payment.setBooking(booking);
         payment.setOrder(order);
+        payment.setUserMembership(userMembership);
         payment.setAmount(amount);
         payment.setPaymentMethod(method);
         payment.setStatus(PaymentStatus.PENDING);
@@ -151,6 +192,10 @@ public class PaymentServiceImpl implements PaymentService {
                     ? bakongService.generateDynamicKhqr(
                             amount, currency, txId, "Cinema Booking",
                             null, null, booking.getExpiresAt())
+                    : userMembership != null
+                    ? bakongService.generateDynamicKhqr(
+                            amount, currency, txId, "Cinema Membership",
+                            null, null)
                     : bakongService.generateDynamicKhqr(
                             amount, currency, txId, "Cinema Booking",
                             null, null);
@@ -225,6 +270,7 @@ public class PaymentServiceImpl implements PaymentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
         if (payment.getStatus() == PaymentStatus.PAID) {
+            activateMembershipIfNeeded(payment);
             return paymentMapper.toResponseDto(payment);
         }
 
@@ -282,6 +328,8 @@ public class PaymentServiceImpl implements PaymentService {
             order.setStatus("PAID");
             orderRepository.save(order);
         }
+
+        activateMembershipIfNeeded(payment);
 
         payment = paymentRepository.save(payment);
 
@@ -370,6 +418,7 @@ public class PaymentServiceImpl implements PaymentService {
                 payment.getBooking() != null ? payment.getBooking().getId() : null,
                 payment.getOrder() != null ? payment.getOrder().getId() : null,
                 null,
+                null,
                 null
         ));
     }
@@ -399,6 +448,7 @@ public class PaymentServiceImpl implements PaymentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
         if (payment.getStatus() == PaymentStatus.PAID) {
+            activateMembershipIfNeeded(payment);
             return paymentMapper.toResponseDto(payment);
         }
 
@@ -483,6 +533,7 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         payment.setStatus(PaymentStatus.EXPIRED);
+        cancelPendingMembershipPayment(payment);
         payment = paymentRepository.save(payment);
         markPendingTransactions(payment, PaymentStatus.EXPIRED);
 
@@ -515,6 +566,45 @@ public class PaymentServiceImpl implements PaymentService {
         return transaction;
     }
 
+    private void activateMembershipIfNeeded(Payment payment) {
+        if (payment.getUserMembership() == null) {
+            return;
+        }
+        UserMembership membership = userMembershipRepository.findByIdForUpdate(payment.getUserMembership().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("UserMembership", payment.getUserMembership().getId()));
+        if (membership.getStatus() == MembershipStatus.ACTIVE) {
+            return;
+        }
+        if (membership.getStatus() != MembershipStatus.PENDING_PAYMENT) {
+            throw new IllegalStateException("A payment cannot activate this membership");
+        }
+        boolean alreadyActive = userMembershipRepository
+                .findByCustomerIdAndStatusForUpdate(membership.getCustomer().getId(), MembershipStatus.ACTIVE)
+                .stream()
+                .anyMatch(existing -> !existing.getId().equals(membership.getId()));
+        if (alreadyActive) {
+            throw new IllegalStateException("Customer already has an active membership");
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
+        membership.setStatus(MembershipStatus.ACTIVE);
+        membership.setStartedAt(now);
+        membership.setExpiresAt(now.plusMonths(membership.getDurationMonthsSnapshot()));
+        userMembershipRepository.save(membership);
+    }
+
+    private void cancelPendingMembershipPayment(Payment payment) {
+        if (payment.getUserMembership() == null) {
+            return;
+        }
+        UserMembership membership = userMembershipRepository.findByIdForUpdate(payment.getUserMembership().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("UserMembership", payment.getUserMembership().getId()));
+        if (membership.getStatus() == MembershipStatus.PENDING_PAYMENT) {
+            membership.setStatus(MembershipStatus.CANCELLED);
+            membership.setCancelledAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
+            userMembershipRepository.save(membership);
+        }
+    }
+
     @Override
     @Transactional
     public PaymentResponseDto update(Long id, PaymentRequestDto dto) {
@@ -539,6 +629,10 @@ public class PaymentServiceImpl implements PaymentService {
                 : existing.getOrder() == null || !dto.orderId().equals(existing.getOrder().getId())) {
             throw new IllegalArgumentException("Payment order cannot change");
         }
+        if (dto.userMembershipId() == null ? existing.getUserMembership() != null
+                : existing.getUserMembership() == null || !dto.userMembershipId().equals(existing.getUserMembership().getId())) {
+            throw new IllegalArgumentException("Payment membership cannot change");
+        }
 
         BigDecimal expectedAmount = dto.amount();
         if (existing.getBooking() != null) {
@@ -553,9 +647,12 @@ public class PaymentServiceImpl implements PaymentService {
         if (existing.getOrder() != null) {
             expectedAmount = expectedAmount.add(bookingTotalService.recalculateOrder(existing.getOrder()));
         }
-        if ((existing.getBooking() != null || existing.getOrder() != null)
+        if (existing.getUserMembership() != null) {
+            expectedAmount = existing.getUserMembership().getPriceSnapshot();
+        }
+        if ((existing.getBooking() != null || existing.getOrder() != null || existing.getUserMembership() != null)
                 && dto.amount().compareTo(expectedAmount) != 0) {
-            throw new IllegalArgumentException("Payment amount must match the current booking/order total: " + expectedAmount);
+            throw new IllegalArgumentException("Payment amount must match the current payable total: " + expectedAmount);
         }
         if (existing.getPaymentMethod() == PaymentMethod.KHQR
                 && existing.getKhqrString() != null

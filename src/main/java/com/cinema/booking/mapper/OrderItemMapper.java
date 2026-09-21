@@ -24,8 +24,12 @@ public class OrderItemMapper {
         dto.setQuantity(orderItem.getQuantity());
         dto.setSubtotal(orderItem.getSubtotal());
         dto.setUnitPrice(orderItem.getUnitPrice());
+        dto.setOriginalUnitPrice(orderItem.getOriginalUnitPrice());
+        dto.setMembershipDiscountAmount(orderItem.getMembershipDiscountAmount());
+        dto.setMembershipBenefitCode(orderItem.getMembershipBenefitCode());
         dto.setOrderId(orderItem.getOrder() != null ? orderItem.getOrder().getId() : null);
         dto.setProductId(orderItem.getProduct() != null ? orderItem.getProduct().getId() : null);
+        dto.setUserMembershipId(orderItem.getUserMembership() != null ? orderItem.getUserMembership().getId() : null);
         return dto;
     }
 }

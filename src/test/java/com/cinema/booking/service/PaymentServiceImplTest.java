@@ -12,6 +12,7 @@ import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
 import com.cinema.booking.repository.SeatRepository;
+import com.cinema.booking.repository.UserMembershipRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.impl.PaymentServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +41,7 @@ class PaymentServiceImplTest {
     @Mock private BookingSeatRepository bookingSeatRepository;
     @Mock private SeatRepository seatRepository;
     @Mock private OrderRepository orderRepository;
+    @Mock private UserMembershipRepository userMembershipRepository;
     @Mock private BakongService bakongService;
     @Mock private BookingTotalService bookingTotalService;
     @Mock private BookingService bookingService;
@@ -58,6 +60,7 @@ class PaymentServiceImplTest {
         paymentService = new PaymentServiceImpl(
                 paymentRepository, paymentTransactionRepository, paymentMapper,
                 bookingRepository, bookingSeatRepository, seatRepository, orderRepository,
+                userMembershipRepository,
                 bakongService, bookingTotalService, bookingService, khqrConfig, authorizationService);
 
         payment = new Payment();

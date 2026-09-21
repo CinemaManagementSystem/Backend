@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -41,8 +42,13 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     List<Payment> findByBookingId(Long bookingId);
 
+    List<Payment> findByUserMembershipId(UUID userMembershipId);
+
     @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     List<Payment> findByBookingIdAndStatusOrderByIdAsc(Long bookingId, PaymentStatus status);
+
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    List<Payment> findByUserMembershipIdAndStatusOrderByIdAsc(UUID userMembershipId, PaymentStatus status);
 
     Optional<Payment> findByMd5Hash(String md5Hash);
 

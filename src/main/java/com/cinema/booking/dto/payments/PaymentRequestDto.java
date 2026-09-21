@@ -20,12 +20,14 @@ public record PaymentRequestDto(
 
         Long orderId,
 
+        java.util.UUID userMembershipId,
+
         String merchantName,
 
         String accountId
 
 ) {
     public PaymentRequestDto(BigDecimal amount, PaymentMethod paymentMethod, Long customerId, Long bookingId, Long orderId) {
-        this(amount, paymentMethod, customerId, bookingId, orderId, null, null);
+        this(amount, paymentMethod, customerId, bookingId, orderId, null, null, null);
     }
 }

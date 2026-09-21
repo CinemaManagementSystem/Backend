@@ -32,7 +32,8 @@ public class PaymentMapper {
                 payment.getMd5Hash(),
                 payment.getBooking() != null ? payment.getBooking().getId() : null,
                 payment.getCustomer() != null ? payment.getCustomer().getId() : null,
-                payment.getOrder() != null ? payment.getOrder().getId() : null
+                payment.getOrder() != null ? payment.getOrder().getId() : null,
+                payment.getUserMembership() != null ? payment.getUserMembership().getId() : null
         );
     }
 }

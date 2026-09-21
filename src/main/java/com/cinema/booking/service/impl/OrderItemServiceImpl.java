@@ -13,6 +13,7 @@ import com.cinema.booking.repository.ProductRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.OrderItemService;
 import com.cinema.booking.service.BookingTotalService;
+import com.cinema.booking.service.MembershipPricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +31,7 @@ public class OrderItemServiceImpl implements OrderItemService {
     private final ProductRepository productRepository;
     private final AuthorizationService authorizationService;
     private final BookingTotalService bookingTotalService;
+    private final MembershipPricingService membershipPricingService;
 
     @Override
     @Transactional
@@ -42,8 +44,13 @@ public class OrderItemServiceImpl implements OrderItemService {
         Product product = productRepository.findById(dto.getProductId())
                 .orElseThrow(() -> new ResourceNotFoundException("Product", dto.getProductId()));
         orderItem.setProduct(product);
-        snapshotPrice(orderItem, product);
+        snapshotPrice(orderItem, order, product);
         orderItem = orderItemRepository.save(orderItem);
+        membershipPricingService.recordUsage(
+                membershipPricingService.calculateFoodUnitPrice(order.getCustomer(), product.getPrice()),
+                "ORDER_ITEM",
+                orderItem.getId()
+        );
         refreshTotals(order);
         return orderItemMapper.toResponseDto(orderItem);
     }
@@ -65,11 +72,18 @@ public class OrderItemServiceImpl implements OrderItemService {
         updated.setProduct(productRepository.findById(dto.getProductId())
                 .orElseThrow(() -> new ResourceNotFoundException("Product", dto.getProductId())));
         if (existing.getProduct() != null && existing.getProduct().getId().equals(updated.getProduct().getId())) {
-            updated.setUnitPrice(existing.getUnitPrice());
+            copyPricingSnapshot(existing, updated);
         } else {
-            snapshotPrice(updated, updated.getProduct());
+            snapshotPrice(updated, order, updated.getProduct());
         }
         updated = orderItemRepository.save(updated);
+        if (existing.getProduct() == null || !existing.getProduct().getId().equals(updated.getProduct().getId())) {
+            membershipPricingService.recordUsage(
+                    membershipPricingService.calculateFoodUnitPrice(order.getCustomer(), updated.getProduct().getPrice()),
+                    "ORDER_ITEM",
+                    updated.getId()
+            );
+        }
         refreshTotals(previousOrder);
         if (!previousOrder.getId().equals(order.getId())) {
             refreshTotals(order);
@@ -117,13 +131,28 @@ public class OrderItemServiceImpl implements OrderItemService {
         }
     }
 
-    private void snapshotPrice(OrderItem orderItem, Product product) {
+    private void snapshotPrice(OrderItem orderItem, Order order, Product product) {
         BigDecimal price = product.getPrice();
         int quantity = orderItem.getQuantity() != null ? orderItem.getQuantity() : 0;
         if (price == null || quantity < 1) {
             throw new IllegalArgumentException("Product price and quantity must be valid");
         }
-        orderItem.setUnitPrice(price);
-        orderItem.setSubtotal(price.multiply(BigDecimal.valueOf(quantity)));
+        MembershipPricingService.PricingResult result = membershipPricingService.calculateFoodUnitPrice(order.getCustomer(), price);
+        orderItem.setOriginalUnitPrice(result.originalAmount());
+        orderItem.setMembershipDiscountAmount(result.discountAmount().multiply(BigDecimal.valueOf(quantity)));
+        orderItem.setMembershipBenefitCode(result.benefitType() != null ? result.benefitType().name() : null);
+        orderItem.setUserMembership(result.membership());
+        orderItem.setUnitPrice(result.finalAmount());
+        orderItem.setSubtotal(result.finalAmount().multiply(BigDecimal.valueOf(quantity)));
+    }
+
+    private void copyPricingSnapshot(OrderItem source, OrderItem target) {
+        int quantity = target.getQuantity() != null ? target.getQuantity() : 0;
+        target.setUnitPrice(source.getUnitPrice());
+        target.setOriginalUnitPrice(source.getOriginalUnitPrice() != null ? source.getOriginalUnitPrice() : source.getUnitPrice());
+        target.setMembershipDiscountAmount(source.getMembershipDiscountAmount() != null ? source.getMembershipDiscountAmount() : BigDecimal.ZERO);
+        target.setMembershipBenefitCode(source.getMembershipBenefitCode());
+        target.setUserMembership(source.getUserMembership());
+        target.setSubtotal(source.getUnitPrice().multiply(BigDecimal.valueOf(quantity)));
     }
 }

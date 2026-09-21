@@ -26,6 +26,15 @@ public class OrderItem {
     @Column(name = "unit_price", nullable = false)
     private BigDecimal unitPrice;
 
+    @Column(name = "original_unit_price")
+    private BigDecimal originalUnitPrice;
+
+    @Column(name = "membership_discount_amount")
+    private BigDecimal membershipDiscountAmount = BigDecimal.ZERO;
+
+    @Column(name = "membership_benefit_code")
+    private String membershipBenefitCode;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id", nullable = false)
     private Order order;
@@ -33,5 +42,9 @@ public class OrderItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_membership_id")
+    private UserMembership userMembership;
 
 }
