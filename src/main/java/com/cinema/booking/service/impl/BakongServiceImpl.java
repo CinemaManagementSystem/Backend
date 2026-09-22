@@ -4,6 +4,7 @@ import com.cinema.booking.config.KhqrConfig;
 import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.service.BakongService;
+import jakarta.annotation.PostConstruct;
 import kh.gov.nbc.bakong_khqr.BakongKHQR;
 import kh.gov.nbc.bakong_khqr.model.IndividualInfo;
 import kh.gov.nbc.bakong_khqr.model.KHQRCurrency;
@@ -21,8 +22,10 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Base64;
 import java.util.Locale;
 import java.util.Map;
 
@@ -49,9 +52,91 @@ public class BakongServiceImpl implements BakongService {
     private static final int MAX_BILL_NUMBER_LENGTH = 25;
     private static final int MAX_STORE_LABEL_LENGTH = 25;
     private static final int MAX_LIVE_CHECK_ATTEMPTS = 2;
+    /** Refresh the token this many seconds before its stated expiry to avoid
+     *  clock-skew races at the boundary. */
+    private static final int TOKEN_EXPIRY_BUFFER_SECONDS = 60;
 
     private final KhqrConfig khqrConfig;
     private final RestClient restClient = RestClient.builder().build();
+
+    // -----------------------------------------------------------------------
+    // Token cache — refreshed automatically when stale or after a 401.
+    // volatile so single-write visibility is guaranteed without a full lock.
+    // -----------------------------------------------------------------------
+    private volatile String cachedToken;
+    private volatile long tokenExpiryEpochSeconds = 0;
+    private volatile boolean bootstrapTokenInvalidated = false;
+
+    public String getCachedToken() {
+        return cachedToken;
+    }
+
+    public void setCachedToken(String cachedToken) {
+        this.cachedToken = cleanToken(cachedToken);
+        if (this.cachedToken != null) {
+            this.bootstrapTokenInvalidated = false;
+        }
+    }
+
+    public long getTokenExpiryEpochSeconds() {
+        return tokenExpiryEpochSeconds;
+    }
+
+    public void setTokenExpiryEpochSeconds(long tokenExpiryEpochSeconds) {
+        this.tokenExpiryEpochSeconds = tokenExpiryEpochSeconds;
+    }
+
+    // -----------------------------------------------------------------------
+    // Startup validation
+    // -----------------------------------------------------------------------
+
+    @PostConstruct
+    public void validateConfiguration() {
+        if (khqrConfig.isMockMode()) {
+            log.info("Bakong running in mock mode — live API credentials are not required");
+            return;
+        }
+        boolean hasStaticToken = hasText(khqrConfig.getToken());
+        boolean hasEmail       = hasText(khqrConfig.getEmail());
+
+        if (!hasText(khqrConfig.getBaseUrl())) {
+            throw new IllegalStateException("Required Bakong configuration is missing: bakong.base-url");
+        }
+        if (!hasEmail) {
+            throw new IllegalStateException("Required Bakong credentials are missing: bakong.email is required "
+                    + "for live token renewal via POST /v1/renew_token");
+        }
+        if (!hasStaticToken) {
+            log.info("Bakong static bootstrap token is not configured; first live verification will request a token "
+                    + "from POST /v1/renew_token");
+        }
+        log.info("Bakong automatic token refresh uses official NBC endpoint POST /v1/renew_token with BAKONG_EMAIL.");
+
+        String baseUrl = khqrConfig.getBaseUrl();
+        if (hasText(baseUrl)) {
+            boolean isSit = baseUrl.contains("sit-api-bakong");
+            log.info("Bakong environment: {} (baseUrl={})", isSit ? "SIT/sandbox" : "production", baseUrl);
+            if (hasStaticToken && isEnvironmentMismatch(baseUrl, khqrConfig.getToken())) {
+                log.warn("Bakong sandbox/production configuration mismatch detected: baseUrl [{}] environment "
+                        + "conflicts with static token environment.", baseUrl);
+            }
+        }
+
+        // Seed the in-memory cache from the static bootstrap token so the very
+        // first request does not need a round-trip to /v1/renew_token.
+        if (hasStaticToken) {
+            String clean = cleanToken(khqrConfig.getToken());
+            long exp = extractJwtExpiry(clean);
+            this.cachedToken = clean;
+            this.tokenExpiryEpochSeconds = exp;
+            log.info("Bakong bootstrap token loaded from config: tokenLength={}, expiryEpochSeconds={}",
+                    clean.length(), exp > 0 ? exp : "unknown");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Public API
+    // -----------------------------------------------------------------------
 
     @Override
     public KhqrPayload generateDynamicKhqr(BigDecimal amount, String currency, String billNumber, String description) {
@@ -69,16 +154,15 @@ public class BakongServiceImpl implements BakongService {
                                            String customAccountId, String customMerchantName, LocalDateTime requestedExpiresAt) {
         validateAmount(amount);
 
-        String accountId = resolveAccountId(customAccountId);
+        String accountId    = resolveAccountId(customAccountId);
         String merchantName = resolveTextWithDefault(customMerchantName, khqrConfig.getMerchantName(), DEFAULT_MERCHANT_NAME);
         String merchantCity = resolveTextWithDefault(khqrConfig.getMerchantCity(), null, DEFAULT_MERCHANT_CITY);
         String normalizedCurrency = normalizeCurrency(currency);
         KHQRCurrency khqrCurrency = "KHR".equals(normalizedCurrency) ? KHQRCurrency.KHR : KHQRCurrency.USD;
-        String bill = normalizeLabel(billNumber, "BILL-" + System.currentTimeMillis(), MAX_BILL_NUMBER_LENGTH);
+        String bill       = normalizeLabel(billNumber, "BILL-" + System.currentTimeMillis(), MAX_BILL_NUMBER_LENGTH);
         String storeLabel = normalizeLabel(description, DEFAULT_STORE_LABEL, MAX_STORE_LABEL_LENGTH);
+
         LocalDateTime now = LocalDateTime.now(PHNOM_PENH_ZONE);
-        // Leave a small safety margin so the externally observed lifetime
-        // never exceeds the configured maximum after generation time elapses.
         LocalDateTime configuredExpiry = now.plusMinutes(resolveExpiryMinutes())
                 .minusSeconds(EXPIRY_SAFETY_SECONDS);
         LocalDateTime expiresAt = requestedExpiresAt != null && requestedExpiresAt.isBefore(configuredExpiry)
@@ -91,7 +175,6 @@ public class BakongServiceImpl implements BakongService {
 
         log.info("Generating KHQR: amount={}, currency={}, billNumber={}", amount, normalizedCurrency, bill);
 
-        // Populate IndividualInfo model for official NBC KHQR SDK
         IndividualInfo individualInfo = new IndividualInfo();
         individualInfo.setBakongAccountId(accountId);
         individualInfo.setMerchantName(merchantName);
@@ -101,10 +184,8 @@ public class BakongServiceImpl implements BakongService {
         individualInfo.setBillNumber(bill);
         individualInfo.setStoreLabel(storeLabel);
         individualInfo.setTerminalLabel(TERMINAL_LABEL);
-        // Tag 99 expirationTimestamp: must be future epoch timestamp in milliseconds for dynamic QR
         individualInfo.setExpirationTimestamp(expirationEpochMillis);
 
-        // Generate dynamic KHQR using official NBC Bakong KHQR SDK
         KHQRResponse response = BakongKHQR.generateIndividual(individualInfo);
 
         var status = response.getKHQRStatus();
@@ -120,14 +201,13 @@ public class BakongServiceImpl implements BakongService {
         }
 
         String khqrString = khqrData.getQr();
-        String md5Hash = khqrData.getMd5();
+        String md5Hash    = khqrData.getMd5();
 
         if (!hasText(khqrString) || !isValidMd5(md5Hash)) {
             log.error("Bakong KHQR SDK returned incomplete QR data");
             throw new IllegalStateException(GENERATION_ERROR_MESSAGE);
         }
 
-        // Validate generated QR string with SDK verify method
         KHQRResponse verifyResponse = verifyGeneratedKhqr(khqrString);
         var verifyStatus = verifyResponse.getKHQRStatus();
         if (verifyStatus == null) {
@@ -137,7 +217,6 @@ public class BakongServiceImpl implements BakongService {
                     verifyStatus.getCode(), safeStatusMessage(verifyStatus.getMessage()));
         }
 
-        // Application-level timeout in Asia/Phnom_Penh timezone
         log.info("Generated KHQR MD5: {}", maskHash(md5Hash));
         log.info("Application payment expiry: {}", expiresAt);
 
@@ -161,32 +240,72 @@ public class BakongServiceImpl implements BakongService {
             return BakongCheckResult.pending(normalizedMd5, "Transaction is pending in mock mode");
         }
 
-        if (!hasText(khqrConfig.getToken())) {
-            log.error("Bakong API token is not configured");
-            return BakongCheckResult.verificationError(normalizedMd5, CONFIGURATION_ERROR_MESSAGE);
-        }
-
-        // Live Bakong Open API call
+        // ------------------------------------------------------------------
+        // Live Bakong Open API: resolve a valid token, then POST to verify.
+        // On HTTP 401: invalidate cache → request a new token → retry once.
+        // ------------------------------------------------------------------
         try {
+            String token = resolveToken("initial");
+            logTokenDiagnostics(token, "initial");
+
+            if (!hasText(token)) {
+                log.error("Bakong token is null or blank after resolution — cannot perform verification");
+                return BakongCheckResult.verificationError(normalizedMd5, CONFIGURATION_ERROR_MESSAGE);
+            }
+
             String url = khqrConfig.getBaseUrl() + "/v1/check_transaction_by_md5";
+            log.info("Bakong verification request endpoint: {}", url);
+            log.info("Bakong verification authorization scheme: Bearer");
+
             Map<?, ?> response = null;
             for (int attempt = 1; attempt <= MAX_LIVE_CHECK_ATTEMPTS; attempt++) {
                 try {
+                    log.info("Bakong verification attempt {}/{}: md5={}", attempt, MAX_LIVE_CHECK_ATTEMPTS,
+                            maskHash(normalizedMd5));
+                    boolean hasAuthHeader = hasText(token);
+                    log.info("Bakong outgoing request contains Authorization header: {}, scheme: Bearer", hasAuthHeader);
+
                     response = createRestClient().post()
                             .uri(url)
-                            .header("Authorization", "Bearer " + khqrConfig.getToken().trim())
+                            .header("Authorization", "Bearer " + token)
                             .contentType(MediaType.APPLICATION_JSON)
                             .body(Map.of("md5", normalizedMd5))
                             .retrieve()
                             .body(Map.class);
-                    break;
+                    log.info("Bakong verification HTTP status: 200 (attempt {})", attempt);
+                    break; // success — exit retry loop
+
                 } catch (RestClientResponseException ex) {
+                    log.warn("Bakong verification HTTP status: {} (attempt {})",
+                            ex.getStatusCode().value(), attempt);
+
                     if (ex.getStatusCode().value() == 401 && attempt < MAX_LIVE_CHECK_ATTEMPTS) {
-                        log.warn("Bakong API authorization failed while checking MD5 {}; retrying once: status={}",
-                                maskHash(normalizedMd5), ex.getStatusCode());
-                        continue;
+                        log.warn("Bakong verification returned HTTP 401 on attempt {}; "
+                                + "invalidating cached token and requesting a fresh one. md5={}",
+                                attempt, maskHash(normalizedMd5));
+
+                        // 1. Invalidate cached Bakong token
+                        invalidateCachedToken();
+
+                        // 2. Request a new Bakong token using endpoint & credentials
+                        String refreshed = requestNewToken();
+                        logTokenDiagnostics(refreshed, "refresh");
+
+                        if (!hasText(refreshed)) {
+                            log.warn("Bakong token refresh failed; cannot retry verification. md5={}",
+                                    maskHash(normalizedMd5));
+                            return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+                        }
+
+                        // 3. Store new token and expiry time (handled in requestNewToken)
+                        // 4. Build a completely new verification request
+                        // 5. Attach the refreshed token to the request
+                        token = refreshed;
+                        log.info("Bakong token refreshed successfully; retrying verification with refreshed token. md5={}",
+                                maskHash(normalizedMd5));
+                        continue; // 6. Retry exactly once
                     }
-                    throw ex;
+                    throw ex; // second 401 or non-401 error — propagate to outer catch
                 }
             }
 
@@ -195,39 +314,8 @@ public class BakongServiceImpl implements BakongService {
                 return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
             }
 
-            Object responseCode = response.get("responseCode");
-            String responseMessage = asString(response.get("responseMessage"));
-            log.debug("Bakong API response: md5={}, responseCode={}, responseMessage={}",
-                    maskHash(normalizedMd5), responseCode, responseMessage);
-            if (isSuccessResponse(responseCode)) {
-                Map<?, ?> dataMap = asMap(response.get("data"));
-                if (dataMap == null) {
-                    log.warn("Bakong API success response for MD5 {} did not include payment data", maskHash(normalizedMd5));
-                    return BakongCheckResult.pending(normalizedMd5, INCOMPLETE_RESPONSE_MESSAGE);
-                }
+            return interpretResponse(response, normalizedMd5);
 
-                String fromAccount = asString(dataMap.get("fromAccountId"));
-                String toAccount = asString(dataMap.get("toAccountId"));
-                String hash = asString(dataMap.get("hash"));
-                BigDecimal amount = asBigDecimal(dataMap.get("amount"));
-                String currency = asString(dataMap.get("currency"));
-
-                log.info("Bakong transaction confirmed for MD5 {}", maskHash(normalizedMd5));
-                return BakongCheckResult.paid(hash, fromAccount, toAccount, amount, currency);
-            }
-
-            if (isRateLimitedResponse(responseMessage)) {
-                log.warn("Bakong API rate limit reached while checking MD5 {}: {}",
-                        maskHash(normalizedMd5), responseMessage);
-                return BakongCheckResult.verificationError(normalizedMd5, responseMessage);
-            }
-
-            if (isNotFoundResponse(responseMessage)) {
-                return BakongCheckResult.notFound(normalizedMd5);
-            }
-
-            return BakongCheckResult.pending(normalizedMd5,
-                    hasText(responseMessage) ? responseMessage : "Pending");
         } catch (RestClientResponseException ex) {
             log.warn("Bakong API returned a retryable error while checking MD5 {}: status={}, responseBodyPresent={}",
                     maskHash(normalizedMd5), ex.getStatusCode(), hasText(ex.getResponseBodyAsString()));
@@ -243,6 +331,143 @@ public class BakongServiceImpl implements BakongService {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Token lifecycle
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns a usable Bakong JWT.
+     * <ol>
+     *   <li>If the in-memory token is present and not about to expire → return it (source=cache).</li>
+     *   <li>Otherwise fetch a new token from {@code /v1/renew_token} and return it (source=refresh).</li>
+     *   <li>If refresh fails, return {@code null}; stale tokens are not reused.</li>
+     * </ol>
+     */
+    public String resolveToken(String callerHint) {
+        if (!hasText(cachedToken) && !bootstrapTokenInvalidated && hasText(khqrConfig.getToken())) {
+            String clean = cleanToken(khqrConfig.getToken());
+            if (hasText(clean)) {
+                this.cachedToken = clean;
+                this.tokenExpiryEpochSeconds = extractJwtExpiry(clean);
+            }
+        }
+
+        long nowEpoch = Instant.now().getEpochSecond();
+        boolean cached = hasText(cachedToken)
+                && (tokenExpiryEpochSeconds == 0
+                    || nowEpoch < tokenExpiryEpochSeconds - TOKEN_EXPIRY_BUFFER_SECONDS);
+
+        if (cached) {
+            log.info("Bakong token source: cache (callerHint={})", callerHint);
+            return cachedToken;
+        }
+
+        log.info("Bakong token source: refresh (cached={}, callerHint={})", hasText(cachedToken), callerHint);
+        String fresh = requestNewToken();
+        if (hasText(fresh)) {
+            return fresh;
+        }
+
+        log.warn("Bakong token refresh failed; no usable token will be returned");
+        return null;
+    }
+
+    /**
+     * Calls official NBC Bakong {@code POST /v1/renew_token} with email,
+     * stores the returned JWT in cache, and returns it.
+     */
+    public String requestNewToken() {
+        String email = khqrConfig.getEmail();
+
+        if (!hasText(email)) {
+            log.warn("Bakong token refresh skipped: email is not configured (set BAKONG_EMAIL).");
+            return null;
+        }
+
+        String tokenUrl = khqrConfig.getBaseUrl() + "/v1/renew_token";
+        Map<String, String> requestBody = Map.of("email", email);
+
+        log.info("Bakong token request started: endpoint={}", tokenUrl);
+
+        try {
+            Map<?, ?> body = createRestClient().post()
+                    .uri(tokenUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(requestBody)
+                    .retrieve()
+                    .body(Map.class);
+
+            log.info("Bakong token request HTTP status: 200");
+
+            if (body == null) {
+                log.warn("Bakong token endpoint returned null body");
+                return null;
+            }
+
+            // Bakong response: {"responseCode":0,"responseMessage":"","data":{"token":"eyJ..."}}
+            Object responseCode = body.get("responseCode");
+            if (!isSuccessResponse(responseCode)) {
+                log.warn("Bakong token request returned non-zero responseCode: {}",
+                        body.get("responseMessage"));
+                return null;
+            }
+
+            String rawToken = null;
+            Object data = body.get("data");
+            if (data instanceof Map<?, ?> dataMap) {
+                rawToken = asString(dataMap.get("token"));
+            }
+            if (!hasText(rawToken)) {
+                rawToken = asString(body.get("token"));
+            }
+
+            if (!hasText(rawToken)) {
+                log.warn("Bakong token endpoint did not return a token value");
+                return null;
+            }
+
+            // Clean quotes, whitespace, and "Bearer " prefix if decorated.
+            String clean = cleanToken(rawToken);
+            long exp     = extractJwtExpiry(clean);
+
+            this.cachedToken              = clean;
+            this.tokenExpiryEpochSeconds  = exp;
+
+            log.info("Bakong token received successfully: tokenLength={}, tokenExpiryEpochSeconds={}",
+                    clean.length(), exp > 0 ? exp : "not-parsed");
+            if (exp > 0) {
+                LocalDateTime expiryTime = LocalDateTime.ofInstant(
+                        Instant.ofEpochSecond(exp), PHNOM_PENH_ZONE);
+                log.info("Bakong token expiry time (Asia/Phnom_Penh): {}", expiryTime);
+            }
+
+            return clean;
+
+        } catch (RestClientResponseException ex) {
+            log.warn("Bakong token request HTTP status: {} — token refresh failed",
+                    ex.getStatusCode().value());
+            return null;
+        } catch (RestClientException ex) {
+            log.warn("Bakong token request network error: {}", ex.getMessage());
+            return null;
+        } catch (Exception ex) {
+            log.warn("Bakong token request unexpected error: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /** Clears the cached token so the next call to resolveToken forces a refresh. */
+    public void invalidateCachedToken() {
+        log.info("Bakong cached token invalidated");
+        this.cachedToken             = null;
+        this.tokenExpiryEpochSeconds = 0;
+        this.bootstrapTokenInvalidated = true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Protected hooks (overridable in tests)
+    // -----------------------------------------------------------------------
+
     protected RestClient createRestClient() {
         return restClient;
     }
@@ -251,6 +476,68 @@ public class BakongServiceImpl implements BakongService {
         return BakongKHQR.verify(khqrString);
     }
 
+    // -----------------------------------------------------------------------
+    // Diagnostic helpers
+    // -----------------------------------------------------------------------
+
+    private void logTokenDiagnostics(String token, String source) {
+        boolean blank = !hasText(token);
+        log.info("Bakong token diagnostics [{}]: isNullOrBlank={}, tokenLength={}, tokenExpiryEpochSeconds={}",
+                source,
+                blank,
+                blank ? 0 : token.length(),
+                tokenExpiryEpochSeconds > 0 ? tokenExpiryEpochSeconds : "unknown");
+        if (tokenExpiryEpochSeconds > 0) {
+            LocalDateTime expiryTime = LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(tokenExpiryEpochSeconds), PHNOM_PENH_ZONE);
+            log.info("Bakong token expiry time (Asia/Phnom_Penh): {}", expiryTime);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Response interpretation
+    // -----------------------------------------------------------------------
+
+    private BakongCheckResult interpretResponse(Map<?, ?> response, String md5) {
+        Object responseCode    = response.get("responseCode");
+        String responseMessage = asString(response.get("responseMessage"));
+        log.debug("Bakong API response: md5={}, responseCode={}, responseMessage={}",
+                maskHash(md5), responseCode, responseMessage);
+
+        if (isSuccessResponse(responseCode)) {
+            Map<?, ?> dataMap = asMap(response.get("data"));
+            if (dataMap == null) {
+                log.warn("Bakong API success response for MD5 {} did not include payment data",
+                        maskHash(md5));
+                return BakongCheckResult.pending(md5, INCOMPLETE_RESPONSE_MESSAGE);
+            }
+
+            String fromAccount = asString(dataMap.get("fromAccountId"));
+            String toAccount   = asString(dataMap.get("toAccountId"));
+            String hash        = asString(dataMap.get("hash"));
+            BigDecimal amount  = asBigDecimal(dataMap.get("amount"));
+            String currency    = asString(dataMap.get("currency"));
+
+            log.info("Bakong transaction confirmed for MD5 {}", maskHash(md5));
+            return BakongCheckResult.paid(hash, fromAccount, toAccount, amount, currency);
+        }
+
+        if (isRateLimitedResponse(responseMessage)) {
+            log.warn("Bakong API rate limit reached while checking MD5 {}: {}", maskHash(md5), responseMessage);
+            return BakongCheckResult.verificationError(md5, responseMessage);
+        }
+
+        if (isNotFoundResponse(responseMessage)) {
+            return BakongCheckResult.notFound(md5);
+        }
+
+        return BakongCheckResult.pending(md5, hasText(responseMessage) ? responseMessage : "Pending");
+    }
+
+    // -----------------------------------------------------------------------
+    // Private utilities
+    // -----------------------------------------------------------------------
+
     private void validateAmount(BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Payment amount must be greater than zero");
@@ -258,80 +545,154 @@ public class BakongServiceImpl implements BakongService {
     }
 
     private String resolveAccountId(String customAccountId) {
-        if (hasText(customAccountId)) {
-            return customAccountId.trim();
-        }
-
-        if (hasText(khqrConfig.getAccountId())) {
-            return khqrConfig.getAccountId().trim();
-        }
-
+        if (hasText(customAccountId)) return customAccountId.trim();
+        if (hasText(khqrConfig.getAccountId())) return khqrConfig.getAccountId().trim();
         throw new IllegalStateException("Bakong account ID is not configured");
     }
 
     private String normalizeCurrency(String currency) {
-        if (!hasText(currency)) {
-            return DEFAULT_CURRENCY;
-        }
-
-        String normalizedCurrency = currency.trim().toUpperCase(Locale.ROOT);
-        if ("USD".equals(normalizedCurrency) || "KHR".equals(normalizedCurrency)) {
-            return normalizedCurrency;
-        }
-
-        throw new IllegalArgumentException("Unsupported currency: " + normalizedCurrency);
+        if (!hasText(currency)) return DEFAULT_CURRENCY;
+        String n = currency.trim().toUpperCase(Locale.ROOT);
+        if ("USD".equals(n) || "KHR".equals(n)) return n;
+        throw new IllegalArgumentException("Unsupported currency: " + n);
     }
 
     private int resolveExpiryMinutes() {
-        int expiryMinutes = khqrConfig.getExpiryMinutes();
-        int positiveExpiry = expiryMinutes > 0 ? expiryMinutes : DEFAULT_EXPIRY_MINUTES;
-        return Math.min(positiveExpiry, MAX_EXPIRY_MINUTES);
+        int v = khqrConfig.getExpiryMinutes();
+        return Math.min(v > 0 ? v : DEFAULT_EXPIRY_MINUTES, MAX_EXPIRY_MINUTES);
     }
 
     private String normalizeLabel(String value, String fallback, int maxLength) {
-        String normalized = hasText(value) ? value.trim() : fallback;
-        return trimToLength(normalized, maxLength);
+        return trimToLength(hasText(value) ? value.trim() : fallback, maxLength);
     }
 
     private String resolveTextWithDefault(String primary, String fallback, String defaultValue) {
-        if (hasText(primary)) {
-            return primary.trim();
-        }
-
-        if (hasText(fallback)) {
-            return fallback.trim();
-        }
-
+        if (hasText(primary)) return primary.trim();
+        if (hasText(fallback)) return fallback.trim();
         return defaultValue;
     }
 
     private String trimToLength(String value, int maxLength) {
-        if (value == null) {
+        if (value == null) return null;
+        String t = value.trim();
+        return t.length() <= maxLength ? t : t.substring(0, maxLength);
+    }
+
+    /**
+     * Removes leading/trailing whitespace, quotation marks, and a "Bearer " prefix (case-insensitive)
+     * from a raw token string.
+     */
+    public static String cleanToken(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim();
+        if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+            if (t.length() >= 2) {
+                t = t.substring(1, t.length() - 1).trim();
+            }
+        }
+        if (t.toLowerCase(Locale.ROOT).startsWith("bearer ")) {
+            t = t.substring(7).trim();
+        }
+        if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+            if (t.length() >= 2) {
+                t = t.substring(1, t.length() - 1).trim();
+            }
+        }
+        return t;
+    }
+
+    public static String stripBearerPrefix(String raw) {
+        return cleanToken(raw);
+    }
+
+    /**
+     * Base64-decodes the JWT payload section and extracts the {@code exp} claim.
+     * Returns {@code 0} if the token is not a parseable JWT.
+     */
+    public static long extractJwtExpiry(String token) {
+        if (!hasTextStatic(token)) return 0;
+        String clean = cleanToken(token);
+        String[] parts = clean.split("\\.");
+        if (parts.length < 2) return 0;
+        try {
+            byte[] payloadBytes = Base64.getUrlDecoder().decode(padBase64(parts[1]));
+            String payload = new String(payloadBytes, StandardCharsets.UTF_8);
+            int expIdx = payload.indexOf("\"exp\"");
+            if (expIdx < 0) return 0;
+            int colonIdx = payload.indexOf(':', expIdx);
+            if (colonIdx < 0) return 0;
+            int start = colonIdx + 1;
+            while (start < payload.length() && (payload.charAt(start) == ' ' || payload.charAt(start) == '\t')) start++;
+            int end = start;
+            while (end < payload.length() && Character.isDigit(payload.charAt(end))) end++;
+            if (end == start) return 0;
+            return Long.parseLong(payload.substring(start, end));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Returns a rough hint about which environment issued the JWT
+     * (looks for "sit" or "prod" in the payload). Returns {@code null}
+     * if the token is not parseable or contains no hint.
+     */
+    public static String extractJwtEnvironmentHint(String token) {
+        if (!hasTextStatic(token)) return null;
+        String clean = cleanToken(token);
+        String[] parts = clean.split("\\.");
+        if (parts.length < 2) return null;
+        try {
+            byte[] bytes = Base64.getUrlDecoder().decode(padBase64(parts[1]));
+            String payload = new String(bytes, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            if (payload.contains("sit-api-bakong") || payload.contains("\"env\":\"sit\"") || payload.contains("\"env\": \"sit\"")) {
+                return "sit";
+            }
+            if (payload.contains("api-bakong") || payload.contains("\"env\":\"prod\"") || payload.contains("\"env\": \"prod\"")) {
+                return "production";
+            }
+            return null;
+        } catch (Exception e) {
             return null;
         }
+    }
 
-        String trimmed = value.trim();
-        if (trimmed.length() <= maxLength) {
-            return trimmed;
+    /**
+     * Checks whether the base URL environment (SIT sandbox vs production)
+     * mismatches the token's environment hint.
+     */
+    public static boolean isEnvironmentMismatch(String baseUrl, String token) {
+        if (!hasTextStatic(baseUrl) || !hasTextStatic(token)) {
+            return false;
         }
-        return trimmed.substring(0, maxLength);
+        boolean isSitUrl = baseUrl.toLowerCase(Locale.ROOT).contains("sit");
+        String envHint = extractJwtEnvironmentHint(token);
+        if (envHint == null) {
+            return false;
+        }
+        boolean isSitToken = "sit".equals(envHint);
+        return isSitUrl != isSitToken;
+    }
+
+    private static String padBase64(String s) {
+        return switch (s.length() % 4) {
+            case 2  -> s + "==";
+            case 3  -> s + "=";
+            default -> s;
+        };
     }
 
     private boolean isSuccessResponse(Object responseCode) {
-        if (responseCode instanceof Number number) {
-            return number.intValue() == 0;
-        }
+        if (responseCode instanceof Number n) return n.intValue() == 0;
         return responseCode != null && "0".equals(responseCode.toString().trim());
     }
 
     private Map<?, ?> asMap(Object value) {
-        return value instanceof Map<?, ?> map ? map : null;
+        return value instanceof Map<?, ?> m ? m : null;
     }
 
     private String asString(Object value) {
-        if (value == null) {
-            return null;
-        }
+        if (value == null) return null;
         String text = value.toString().trim();
         return text.isEmpty() ? null : text;
     }
@@ -340,10 +701,12 @@ public class BakongServiceImpl implements BakongService {
         return value != null && !value.isBlank();
     }
 
+    private static boolean hasTextStatic(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private BigDecimal asBigDecimal(Object value) {
-        if (value == null) {
-            return null;
-        }
+        if (value == null) return null;
         try {
             return new BigDecimal(value.toString().trim());
         } catch (NumberFormatException ex) {
@@ -355,24 +718,16 @@ public class BakongServiceImpl implements BakongService {
         return value != null && value.matches("[0-9a-fA-F]{32}");
     }
 
-    private boolean isNotFoundResponse(String responseMessage) {
-        if (!hasText(responseMessage)) {
-            return false;
-        }
-        String normalizedMessage = responseMessage.toLowerCase(Locale.ROOT);
-        return normalizedMessage.contains("not found")
-                || normalizedMessage.contains("not exist")
-                || normalizedMessage.contains("no transaction");
+    private boolean isNotFoundResponse(String msg) {
+        if (!hasText(msg)) return false;
+        String n = msg.toLowerCase(Locale.ROOT);
+        return n.contains("not found") || n.contains("not exist") || n.contains("no transaction");
     }
 
-    private boolean isRateLimitedResponse(String responseMessage) {
-        if (!hasText(responseMessage)) {
-            return false;
-        }
-        String normalizedMessage = responseMessage.toLowerCase(Locale.ROOT);
-        return normalizedMessage.contains("daily request limit")
-                || normalizedMessage.contains("rate limit")
-                || normalizedMessage.contains("too many request");
+    private boolean isRateLimitedResponse(String msg) {
+        if (!hasText(msg)) return false;
+        String n = msg.toLowerCase(Locale.ROOT);
+        return n.contains("daily request limit") || n.contains("rate limit") || n.contains("too many request");
     }
 
     private String safeStatusMessage(String message) {
@@ -380,29 +735,26 @@ public class BakongServiceImpl implements BakongService {
     }
 
     private String maskHash(String hash) {
-        if (!hasText(hash)) {
-            return "<missing>";
-        }
-        String normalized = hash.trim();
-        if (normalized.length() <= 8) {
-            return "****";
-        }
-        return normalized.substring(0, 4) + "..." + normalized.substring(normalized.length() - 4);
+        if (!hasText(hash)) return "<missing>";
+        String n = hash.trim();
+        if (n.length() <= 8) return "****";
+        return n.substring(0, 4) + "..." + n.substring(n.length() - 4);
     }
+
+    // -----------------------------------------------------------------------
+    // Public static utilities (used by other layers and tests)
+    // -----------------------------------------------------------------------
 
     public static String calculateCrc16(String input) {
         int crc = 0xFFFF;
         int polynomial = 0x1021;
         byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
-
         for (byte b : bytes) {
             for (int i = 0; i < 8; i++) {
                 boolean bit = ((b >> (7 - i)) & 1) == 1;
                 boolean c15 = ((crc >> 15) & 1) == 1;
                 crc <<= 1;
-                if (c15 ^ bit) {
-                    crc ^= polynomial;
-                }
+                if (c15 ^ bit) crc ^= polynomial;
             }
         }
         crc &= 0xFFFF;
@@ -414,9 +766,7 @@ public class BakongServiceImpl implements BakongService {
             MessageDigest md = MessageDigest.getInstance("MD5");
             byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
-            }
+            for (byte b : digest) sb.append(String.format("%02x", b));
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("MD5 algorithm unavailable", e);

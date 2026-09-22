@@ -12,12 +12,16 @@ import org.springframework.context.annotation.Configuration;
 public class KhqrConfig {
 
     private String accountId;
+    /** Static bootstrap token loaded from BAKONG_TOKEN. Used until the first
+     *  automatic refresh; after that the in-memory cache takes precedence. */
     private String token;
     private String baseUrl;
     private String merchantName;
     private String merchantCity;
     private String currency;
     private String email;
+    /** Legacy placeholder only; current Bakong token renewal uses BAKONG_EMAIL with POST /v1/renew_token. */
+    private String password;
     private boolean mockMode;
     private int expiryMinutes = 5;
     private int recoveryWindowMinutes = 15;
