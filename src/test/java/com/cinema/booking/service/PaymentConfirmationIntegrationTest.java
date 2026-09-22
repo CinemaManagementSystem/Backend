@@ -347,7 +347,7 @@ class PaymentConfirmationIntegrationTest {
     }
 
     @Test
-    void expiredBookingCanBeRecoveredWhenBakongConfirmsAndSeatsRemainFree() {
+    void expiredPaymentIsNeverSentBackToBakong() {
         Fixture fixture = createFixture(1, BookingStatus.PENDING);
 
         bookingService.expirePendingBooking(fixture.booking().getId());
@@ -358,14 +358,14 @@ class PaymentConfirmationIntegrationTest {
 
         paymentService.checkStatusFromSystem(payment.getId());
 
-        assertEquals(PaymentStatus.PAID, paymentRepository.findById(payment.getId()).orElseThrow().getStatus());
-        assertEquals(BookingStatus.CONFIRMED, bookingRepository.findById(fixture.booking().getId()).orElseThrow().getStatus());
-        assertEquals(List.of("CONFIRMED"), bookingSeatRepository.findByBookingId(fixture.booking().getId())
+        assertEquals(PaymentStatus.EXPIRED, paymentRepository.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(BookingStatus.EXPIRED, bookingRepository.findById(fixture.booking().getId()).orElseThrow().getStatus());
+        assertEquals(List.of("CANCELLED"), bookingSeatRepository.findByBookingId(fixture.booking().getId())
                 .stream().map(BookingSeat::getStatus).toList());
     }
 
     @Test
-    void failedPaymentCanBeRecoveredByAuthoritativeLateBakongResult() {
+    void failedPaymentIsNeverSentBackToBakong() {
         Fixture fixture = createFixture(1, BookingStatus.PENDING);
         Payment payment = paymentRepository.findById(fixture.payment().getId()).orElseThrow();
         payment.setStatus(PaymentStatus.FAILED);
@@ -374,11 +374,11 @@ class PaymentConfirmationIntegrationTest {
 
         paymentService.checkStatusFromSystem(payment.getId());
 
-        assertEquals(PaymentStatus.PAID, paymentRepository.findById(payment.getId()).orElseThrow().getStatus());
-        assertEquals(BookingStatus.CONFIRMED, bookingRepository.findById(fixture.booking().getId()).orElseThrow().getStatus());
-        assertEquals(List.of("CONFIRMED"), bookingSeatRepository.findByBookingId(fixture.booking().getId())
+        assertEquals(PaymentStatus.FAILED, paymentRepository.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(BookingStatus.PENDING, bookingRepository.findById(fixture.booking().getId()).orElseThrow().getStatus());
+        assertEquals(List.of("PENDING"), bookingSeatRepository.findByBookingId(fixture.booking().getId())
                 .stream().map(BookingSeat::getStatus).toList());
-        assertEquals(PaymentStatus.PAID,
+        assertEquals(PaymentStatus.PENDING,
                 paymentTransactionRepository.findByPaymentId(payment.getId()).get(0).getStatus());
     }
 

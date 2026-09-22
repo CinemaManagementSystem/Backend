@@ -53,10 +53,19 @@ public class OrderServiceImpl implements OrderService {
         Order existing = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", id));
         authorizationService.requireOwnerOrStaff(existing.getCustomer());
+        User currentUser = authorizationService.getCurrentUser();
+        boolean staffOrAdmin = authorizationService.isStaffOrAdmin(currentUser);
+        if (!staffOrAdmin && !"PENDING".equalsIgnoreCase(existing.getStatus())) {
+            throw new IllegalStateException("Only pending orders can be modified by customers");
+        }
         Booking previousBooking = existing.getBooking();
 
         Order updated = orderMapper.toEntity(dto);
         updated.setId(existing.getId());
+        if (!staffOrAdmin) {
+            updated.setStatus(existing.getStatus());
+            updated.setCompletedAt(existing.getCompletedAt());
+        }
         if (dto.getBookingId() != null) {
             Booking booking = bookingRepository.findById(dto.getBookingId())
                     .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId()));

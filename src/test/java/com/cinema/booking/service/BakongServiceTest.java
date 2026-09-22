@@ -29,6 +29,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -46,6 +50,8 @@ class BakongServiceTest {
     private static final String MOCK_PAID_MD5 = "deadbeefdeadbeefdeadbeefdeadbeef";
     private static final String VERIFY_PATH   = "/v1/check_transaction_by_md5";
     private static final String TOKEN_PATH    = "/v1/renew_token";
+    private static final String REQUEST_TOKEN_PATH = "/v1/request_token";
+    private static final String VERIFY_TOKEN_PATH = "/v1/verify";
 
     // A real HS256 JWT with exp = 9999999999 (far future).
     // Payload: {"data":{},"iat":1000000000,"exp":9999999999}
@@ -77,6 +83,8 @@ class BakongServiceTest {
         khqrConfig.setMerchantCity("Phnom Penh");
         khqrConfig.setMockMode(true);
         khqrConfig.setBaseUrl(BASE_URL);
+        khqrConfig.setOrganization("Cinema Test Org");
+        khqrConfig.setProject("Cinema Booking Test");
 
         bakongService = new BakongServiceImpl(khqrConfig);
     }
@@ -258,6 +266,7 @@ class BakongServiceTest {
         assertEquals("VERIFICATION_ERROR", result.status());
         assertFalse(result.authoritative());
         assertTrue(result.retryable());
+        assertFalse(result.rateLimited());
     }
 
     @Test
@@ -461,7 +470,8 @@ class BakongServiceTest {
         assertFalse(result.paid());
         assertEquals("VERIFICATION_ERROR", result.status());
         assertFalse(result.authoritative());
-        assertTrue(result.retryable());
+        assertFalse(result.retryable());
+        assertTrue(result.rateLimited());
     }
 
     @Test
@@ -614,7 +624,17 @@ class BakongServiceTest {
 
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        BakongServiceImpl service = serviceWithRestClient(builder.build());
+        BakongRequestBudgetService budget = mock(BakongRequestBudgetService.class);
+        when(budget.tryAcquire()).thenReturn(
+                new BakongRequestBudgetService.Permit(true, 0, 1, 95, null),
+                new BakongRequestBudgetService.Permit(true, 0, 2, 95, null));
+        RestClient client = builder.build();
+        BakongServiceImpl service = new BakongServiceImpl(khqrConfig, budget) {
+            @Override
+            protected RestClient createRestClient() {
+                return client;
+            }
+        };
         // Seed with the old token.
         service.setCachedToken(LIVE_TOKEN);
         service.setTokenExpiryEpochSeconds(Instant.now().getEpochSecond() + 86400);
@@ -646,6 +666,7 @@ class BakongServiceTest {
         assertTrue(result.paid());
         assertEquals("PAID", result.status());
         assertEquals("hash-after-refresh", result.hash());
+        verify(budget, times(2)).tryAcquire();
     }
 
     @Test
@@ -824,6 +845,7 @@ class BakongServiceTest {
     @DisplayName("resolveToken returns null when no token is available and refresh credentials are missing")
     void testResolveTokenReturnsNullWhenNoCredentials() {
         khqrConfig.setToken(null);
+        khqrConfig.setEmail(null);
         khqrConfig.setPassword(null);
         bakongService.setCachedToken(null);
         bakongService.setTokenExpiryEpochSeconds(0);
@@ -831,6 +853,61 @@ class BakongServiceTest {
         String token = bakongService.resolveToken("test");
 
         assertNull(token);
+    }
+
+    @Test
+    @DisplayName("Blank token starts initial request_token flow and does not call renew_token")
+    void testBlankTokenUsesInitialRequestTokenNotRenewToken() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(null);
+        khqrConfig.setEmail("test@cinema.com");
+        khqrConfig.setOrganization("Cinema Org");
+        khqrConfig.setProject("Cinema Project");
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + REQUEST_TOKEN_PATH))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"email\":\"test@cinema.com\",\"organization\":\"Cinema Org\",\"project\":\"Cinema Project\"}"))
+                .andRespond(withSuccess("{\"responseCode\":0,\"responseMessage\":\"Email has been sent\",\"data\":null}", MediaType.APPLICATION_JSON));
+
+        String token = service.resolveToken("initial-missing-token");
+
+        server.verify();
+        assertNull(token);
+    }
+
+    @Test
+    @DisplayName("Initial request_token flow verifies email code and caches returned production token")
+    void testInitialRequestTokenThenVerifyCachesToken() {
+        khqrConfig.setMockMode(false);
+        khqrConfig.setToken(null);
+        khqrConfig.setEmail("test@cinema.com");
+        khqrConfig.setOrganization("Cinema Org");
+        khqrConfig.setProject("Cinema Project");
+        khqrConfig.setVerificationCode("12345678901234567890");
+
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        BakongServiceImpl service = serviceWithRestClient(builder.build());
+
+        server.expect(requestTo(BASE_URL + REQUEST_TOKEN_PATH))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"responseCode\":0,\"responseMessage\":\"Email has been sent\",\"data\":null}", MediaType.APPLICATION_JSON));
+
+        server.expect(requestTo(BASE_URL + VERIFY_TOKEN_PATH))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"code\":\"12345678901234567890\"}"))
+                .andRespond(withSuccess("{\"responseCode\":0,\"responseMessage\":\"Token has been issued\",\"data\":{\"token\":\"" + FRESH_TOKEN + "\"}}", MediaType.APPLICATION_JSON));
+
+        String token = service.resolveToken("initial-with-code");
+
+        server.verify();
+        assertEquals(FRESH_TOKEN, token);
+        assertEquals(FRESH_TOKEN, service.getCachedToken());
+        assertEquals(9999999999L, service.getTokenExpiryEpochSeconds());
     }
 
     @Test

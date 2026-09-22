@@ -34,7 +34,19 @@ public record PaymentResponseDto(
 
         Long orderId,
 
-        java.util.UUID userMembershipId
+        java.util.UUID userMembershipId,
+
+        LocalDateTime lastVerificationAt,
+
+        LocalDateTime nextVerificationAt,
+
+        int verificationAttemptCount,
+
+        int manualVerificationCount,
+
+        String lastVerificationError,
+
+        LocalDateTime rateLimitedUntil
 
 ) {
 }

@@ -42,8 +42,6 @@ public class RateLimiterService {
             policy("auth-logout", "POST", "/api/auth/logout", 20, KeyStrategy.USER_OR_IP, "authenticated user"),
 
             policy("payment-create", "POST", "/api/payments", 5, KeyStrategy.USER_OR_IP, "USER"),
-            policy("payment-verify", "POST", "/api/payments/verify-khqr", 30, KeyStrategy.USER_OR_IP, "USER"),
-            policy("payment-prepare", "POST", "/api/payments/*/prepare-khqr", 5, KeyStrategy.USER_OR_IP, "USER"),
             policy("payment-cash-switch", "POST", "/api/payments/*/switch-to-cash", 5, KeyStrategy.USER_OR_IP, "USER"),
             policy("payment-status", "GET", "/api/payments/*/status", 30, KeyStrategy.USER_AND_PATH, "USER"),
             policy("payment-confirm", "POST", "/api/payments/*/confirm", 10, KeyStrategy.USER_OR_IP, "STAFF/ADMIN"),

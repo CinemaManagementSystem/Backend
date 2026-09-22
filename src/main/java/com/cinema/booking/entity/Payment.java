@@ -48,8 +48,32 @@ public class Payment {
     @Column(name = "expires_at", nullable = true)
     private LocalDateTime expiresAt;
 
-    // One browser SDK payload may replace the server draft before display.
-    private boolean clientQrPrepared;
+    @Column(name = "verification_started_at")
+    private LocalDateTime verificationStartedAt;
+
+    @Column(name = "last_verification_at")
+    private LocalDateTime lastVerificationAt;
+
+    @Column(name = "next_verification_at")
+    private LocalDateTime nextVerificationAt;
+
+    @Column(name = "verification_attempt_count", nullable = false)
+    private int verificationAttemptCount;
+
+    @Column(name = "scheduled_verification_count", nullable = false)
+    private int scheduledVerificationCount;
+
+    @Column(name = "manual_verification_count", nullable = false)
+    private int manualVerificationCount;
+
+    @Column(name = "verification_failure_count", nullable = false)
+    private int verificationFailureCount;
+
+    @Column(name = "last_verification_error", length = 500)
+    private String lastVerificationError;
+
+    @Column(name = "rate_limited_until")
+    private LocalDateTime rateLimitedUntil;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "booking_id", nullable = true)

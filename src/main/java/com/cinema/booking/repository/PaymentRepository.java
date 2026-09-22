@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -31,12 +32,25 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             where p.status in :statuses
               and p.paymentMethod = :paymentMethod
               and p.md5Hash is not null
-              and (p.expiresAt is null or p.expiresAt >= :recoveryCutoff)
+              and (p.status = com.cinema.booking.enums.PaymentStatus.PENDING
+                   or p.expiresAt is null
+                   or p.expiresAt >= :recoveryCutoff)
             """)
     List<Payment> findRecoverableKhqrPayments(
             @Param("statuses") List<PaymentStatus> statuses,
             @Param("paymentMethod") PaymentMethod paymentMethod,
             @Param("recoveryCutoff") LocalDateTime recoveryCutoff);
+
+    @Query("""
+            select p from Payment p
+            where p.status = com.cinema.booking.enums.PaymentStatus.PENDING
+              and p.paymentMethod = com.cinema.booking.enums.PaymentMethod.KHQR
+              and p.md5Hash is not null
+              and (p.nextVerificationAt is null or p.nextVerificationAt <= :now)
+              and (p.rateLimitedUntil is null or p.rateLimitedUntil <= :now)
+            order by p.nextVerificationAt asc, p.id asc
+            """)
+    List<Payment> findDueKhqrPayments(@Param("now") LocalDateTime now, Pageable pageable);
 
     List<Payment> findByCustomerId(Long customerId);
 

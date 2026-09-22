@@ -26,10 +26,13 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentServiceImplTest {
@@ -43,6 +46,7 @@ class PaymentServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private UserMembershipRepository userMembershipRepository;
     @Mock private BakongService bakongService;
+    @Mock private BakongRequestBudgetService bakongRequestBudgetService;
     @Mock private BookingTotalService bookingTotalService;
     @Mock private BookingService bookingService;
     private KhqrConfig khqrConfig;
@@ -61,7 +65,11 @@ class PaymentServiceImplTest {
                 paymentRepository, paymentTransactionRepository, paymentMapper,
                 bookingRepository, bookingSeatRepository, seatRepository, orderRepository,
                 userMembershipRepository,
-                bakongService, bookingTotalService, bookingService, khqrConfig, authorizationService);
+                bakongService, bakongRequestBudgetService, bookingTotalService, bookingService,
+                khqrConfig, authorizationService);
+
+        lenient().when(bakongRequestBudgetService.tryAcquire())
+                .thenReturn(new BakongRequestBudgetService.Permit(true, 0, 1, 95, null));
 
         payment = new Payment();
         payment.setId(37L);
@@ -102,13 +110,86 @@ class PaymentServiceImplTest {
                 "bakong-hash", "customer@bakong", null, null, null));
     }
 
+    @Test
+    void paidPaymentIsNeverCheckedAgain() {
+        payment.setStatus(PaymentStatus.PAID);
+
+        paymentService.checkStatusFromSystem(payment.getId());
+
+        verify(bakongService, never()).checkTransactionByMd5(any());
+    }
+
+    @Test
+    void rateLimitKeepsPaymentPendingAndStartsCooldown() {
+        LocalDateTime cooldown = LocalDateTime.now().plusHours(2);
+        when(bakongService.checkTransactionByMd5(payment.getMd5Hash()))
+                .thenReturn(BakongCheckResult.rateLimited(payment.getMd5Hash(),
+                        "Daily request limit of 100 exceeded. Please try again tomorrow.", null));
+        when(bakongRequestBudgetService.markRateLimited(null)).thenReturn(cooldown);
+
+        paymentService.checkStatusFromSystem(payment.getId());
+
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+        assertEquals(cooldown, payment.getRateLimitedUntil());
+        assertEquals("Bakong verification is temporarily unavailable. Please try again later.",
+                payment.getLastVerificationError());
+        verify(paymentTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void activeCooldownPreventsAnotherBakongRequest() {
+        payment.setRateLimitedUntil(LocalDateTime.now().plusHours(1));
+
+        paymentService.checkStatusFromSystem(payment.getId());
+
+        verify(bakongService, never()).checkTransactionByMd5(any());
+        assertEquals(0, payment.getVerificationAttemptCount());
+    }
+
+    @Test
+    void manualVerificationIsLimitedToTwoRequests() {
+        payment.setManualVerificationCount(2);
+
+        paymentService.checkStatus(payment.getId(), com.cinema.booking.enums.PaymentVerificationSource.MANUAL);
+
+        verify(bakongService, never()).checkTransactionByMd5(any());
+        assertEquals("The manual payment check limit has been reached.", payment.getLastVerificationError());
+    }
+
+    @Test
+    void retryAfterControlsTemporaryErrorBackoff() {
+        when(bakongService.checkTransactionByMd5(payment.getMd5Hash()))
+                .thenReturn(BakongCheckResult.verificationError(payment.getMd5Hash(), "Temporary outage", 300L));
+        LocalDateTime before = LocalDateTime.now();
+
+        paymentService.checkStatusFromSystem(payment.getId());
+
+        assertTrue(payment.getNextVerificationAt().isAfter(before.plusSeconds(295)));
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+    }
+
+    @Test
+    void scheduledAndFrontendChecksCannotVerifySamePaymentTwice() {
+        payment.setVerificationStartedAt(LocalDateTime.now().minusMinutes(1));
+        payment.setNextVerificationAt(LocalDateTime.now().minusSeconds(1));
+        when(bakongService.checkTransactionByMd5(payment.getMd5Hash()))
+                .thenReturn(BakongCheckResult.pending(payment.getMd5Hash(), "Pending"));
+
+        paymentService.checkStatusFromSystem(
+                payment.getId(), com.cinema.booking.enums.PaymentVerificationSource.SCHEDULED);
+        paymentService.checkStatusFromSystem(
+                payment.getId(), com.cinema.booking.enums.PaymentVerificationSource.SCHEDULED);
+
+        verify(bakongService, times(1)).checkTransactionByMd5(payment.getMd5Hash());
+        assertEquals(1, payment.getVerificationAttemptCount());
+    }
+
     private void assertRejected(BakongCheckResult result) {
         when(bakongService.checkTransactionByMd5(payment.getMd5Hash())).thenReturn(result);
 
         paymentService.checkStatusFromSystem(payment.getId());
 
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
-        verify(paymentRepository, never()).save(any(Payment.class));
         verify(paymentTransactionRepository, never()).save(any());
     }
 }

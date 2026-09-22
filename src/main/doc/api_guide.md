@@ -940,9 +940,14 @@ Manually confirms a payment (e.g., cash received). Transitions linked booking �
 
 > This is idempotent — confirming an already-PAID payment returns the same result.
 
-#### `GET /api/payments/{id}/status` — Authenticated
+#### `GET /api/payments/{id}/status?source=MANUAL|SCHEDULED|FINAL` — Authenticated
 
 Poll this endpoint to check payment status. For KHQR payments, the server automatically checks with Bakong network.
+
+The checkout UI schedules `SCHEDULED` checks at 60, 120, 180, and 240
+seconds, then sends one `FINAL` check at expiry. `MANUAL` is limited to two
+provider checks per payment. `SYSTEM` is reserved for backend jobs and is
+rejected on this HTTP endpoint.
 
 **Behavior:**
 - If `PENDING` and paid is confirmed by Bakong → status changes to `PAID`
@@ -951,12 +956,18 @@ Poll this endpoint to check payment status. For KHQR payments, the server automa
   remain `PENDING` until its expiry; keep polling while `expiresAt` is still in
   the future
 - Transport, configuration, or invalid-response failures do not mean the user
-  has paid; keep the payment pending and retry according to the expiry window
+  has paid; keep the payment pending and retry with exponential backoff
+- Bakong daily-rate-limit responses remain `PENDING` locally and expose
+  `lastVerificationError` plus `rateLimitedUntil`; they never become `FAILED`
+- Calls made before `nextVerificationAt`, concurrent duplicate calls, and calls
+  for terminal payments return the current record without contacting Bakong
 
 Treat `PAID`, `FAILED`, and `EXPIRED` as terminal statuses. A `CASH` payment
 remains pending until Staff/Admin calls the confirm endpoint. The response
 fields `khqrString`, `md5Hash`, and `expiresAt` are populated for KHQR and are
-`null` for CASH.
+`null` for CASH. Verification diagnostics include `lastVerificationAt`,
+`nextVerificationAt`, `verificationAttemptCount`, `manualVerificationCount`,
+`lastVerificationError`, and `rateLimitedUntil`.
 
 #### `GET /api/payments` / `GET /api/payments/{id}`
 

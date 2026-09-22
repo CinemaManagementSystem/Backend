@@ -198,6 +198,24 @@ public class PaymentControllerTest {
     }
 
     @Test
+    @DisplayName("Customer cannot invoke the internal SYSTEM verification source")
+    void testSystemVerificationSourceIsRejected() throws Exception {
+        Payment payment = new Payment();
+        payment.setAmount(new BigDecimal("18.00"));
+        payment.setPaymentMethod(PaymentMethod.KHQR);
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setCustomer(customerUser);
+        payment.setTransactionId("TXN-KHQR-SYSTEM-SOURCE");
+        payment.setMd5Hash("0123456789abcdef0123456789abcdef");
+        payment = paymentRepository.save(payment);
+
+        mockMvc.perform(get("/api/payments/" + payment.getId() + "/status")
+                        .queryParam("source", "SYSTEM")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("Status check should confirm KHQR payment and append PAID transaction when Bakong reports paid")
     void testCheckStatusConfirmsPaidKhqrPayment() throws Exception {
         Payment payment = new Payment();

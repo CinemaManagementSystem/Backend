@@ -5,8 +5,6 @@ import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
-import com.cinema.booking.dto.payments.VerifyKhqrRequestDto;
-import com.cinema.booking.dto.payments.PrepareKhqrRequestDto;
 import com.cinema.booking.entity.Booking;
 import com.cinema.booking.entity.BookingSeat;
 import com.cinema.booking.entity.Order;
@@ -18,6 +16,7 @@ import com.cinema.booking.enums.BookingStatus;
 import com.cinema.booking.enums.MembershipStatus;
 import com.cinema.booking.enums.PaymentMethod;
 import com.cinema.booking.enums.PaymentStatus;
+import com.cinema.booking.enums.PaymentVerificationSource;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.mapper.PaymentMapper;
 import com.cinema.booking.repository.BookingRepository;
@@ -29,10 +28,10 @@ import com.cinema.booking.repository.SeatRepository;
 import com.cinema.booking.repository.UserMembershipRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BakongService;
+import com.cinema.booking.service.BakongRequestBudgetService;
 import com.cinema.booking.service.BookingTotalService;
 import com.cinema.booking.service.BookingService;
 import com.cinema.booking.service.PaymentService;
-import com.cinema.booking.service.KhqrPayloadValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,14 +42,20 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
+
+    private static final ZoneId PHNOM_PENH_ZONE = ZoneId.of("Asia/Phnom_Penh");
+    private static final int MAX_MANUAL_CHECKS = 2;
+    private static final int[] SCHEDULED_VERIFICATION_SECONDS = {60, 120, 180, 240};
 
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
@@ -61,10 +66,12 @@ public class PaymentServiceImpl implements PaymentService {
     private final OrderRepository orderRepository;
     private final UserMembershipRepository userMembershipRepository;
     private final BakongService bakongService;
+    private final BakongRequestBudgetService bakongRequestBudgetService;
     private final BookingTotalService bookingTotalService;
     private final BookingService bookingService;
     private final KhqrConfig khqrConfig;
     private final AuthorizationService authorizationService;
+    private final ConcurrentHashMap<Long, ReentrantLock> verificationLocks = new ConcurrentHashMap<>();
 
     @Override
     @Transactional
@@ -169,6 +176,9 @@ public class PaymentServiceImpl implements PaymentService {
                 }
             }
         }
+        if (payment != null && payment.getOrder() != null && order == null) {
+            throw new IllegalArgumentException("Existing pending payment includes an order; include orderId to resume it");
+        }
         if (payment == null) {
             payment = paymentMapper.toEntity(dto);
         }
@@ -180,7 +190,6 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setAmount(amount);
         payment.setPaymentMethod(method);
         payment.setStatus(PaymentStatus.PENDING);
-        payment.setClientQrPrepared(false);
 
         String txId = "TXN-" + method.name() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
@@ -202,12 +211,14 @@ public class PaymentServiceImpl implements PaymentService {
             payment.setKhqrString(khqr.khqrString());
             payment.setMd5Hash(khqr.md5Hash());
             payment.setExpiresAt(khqr.expiresAt());
+            initializeVerificationState(payment, LocalDateTime.now(PHNOM_PENH_ZONE));
         } else {
             // CASH payment at cinema counter — no gateway reference, nothing to expire
             payment.setTransactionId(null);
             payment.setKhqrString(null);
             payment.setMd5Hash(null);
             payment.setExpiresAt(null);
+            clearVerificationState(payment);
         }
 
         payment = paymentRepository.save(payment);
@@ -302,6 +313,9 @@ public class PaymentServiceImpl implements PaymentService {
             ensureSeatsCanBeConfirmed(booking, bookingSeats);
         }
 
+        PaymentStatus previousPaymentStatus = payment.getStatus();
+        BookingStatus previousBookingStatus = booking != null ? booking.getStatus() : null;
+
         payment.setStatus(PaymentStatus.PAID);
         if (payment.getPaidAt() == null) {
             payment.setPaidAt(LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh")));
@@ -325,7 +339,7 @@ public class PaymentServiceImpl implements PaymentService {
 
         if (payment.getOrder() != null) {
             Order order = payment.getOrder();
-            order.setStatus("PAID");
+            order.setStatus("CONFIRMED");
             orderRepository.save(order);
         }
 
@@ -341,6 +355,9 @@ public class PaymentServiceImpl implements PaymentService {
                 payment.getId(), booking != null ? booking.getId() : null, payment.getTransactionId(),
                 maskHash(payment.getMd5Hash()), payment.getStatus(),
                 booking != null ? booking.getStatus() : null, bookingSeats.size());
+        log.info("Payment status transition after Bakong verification: paymentId={}, paymentStatus={}->{}, bookingStatus={}->{}, seatCount={}",
+                payment.getId(), previousPaymentStatus, payment.getStatus(),
+                previousBookingStatus, booking != null ? booking.getStatus() : null, bookingSeats.size());
 
         return paymentMapper.toResponseDto(payment);
     }
@@ -348,34 +365,28 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public PaymentResponseDto checkStatus(Long id) {
+        return checkStatus(id, PaymentVerificationSource.MANUAL);
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDto checkStatus(Long id, PaymentVerificationSource source) {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
         authorizationService.requireOwnerOrStaff(payment.getCustomer());
-        return checkStatusInternal(id);
+        return withVerificationLock(id, () -> checkStatusInternal(id, source));
     }
 
     @Override
     @Transactional
     public PaymentResponseDto checkStatusFromSystem(Long id) {
-        return checkStatusInternal(id);
+        return checkStatusFromSystem(id, PaymentVerificationSource.SYSTEM);
     }
 
     @Override
     @Transactional
-    public PaymentResponseDto verifyKhqr(VerifyKhqrRequestDto request) {
-        Payment payment = paymentRepository.findById(request.paymentId())
-                .orElseThrow(() -> new ResourceNotFoundException("Payment", request.paymentId()));
-        authorizationService.requireOwnerOrStaff(payment.getCustomer());
-
-        if (payment.getPaymentMethod() != PaymentMethod.KHQR) {
-            throw new IllegalArgumentException("Only KHQR payments can be verified with a QR payload");
-        }
-        if (!Objects.equals(payment.getKhqrString(), request.qr().trim())
-                || !Objects.equals(payment.getMd5Hash(), request.md5().trim())) {
-            throw new IllegalArgumentException("The QR payload does not match this payment");
-        }
-
-        return checkStatusInternal(payment.getId());
+    public PaymentResponseDto checkStatusFromSystem(Long id, PaymentVerificationSource source) {
+        return withVerificationLock(id, () -> checkStatusInternal(id, source));
     }
 
     @Override
@@ -394,9 +405,11 @@ public class PaymentServiceImpl implements PaymentService {
         if (payment.getStatus() == PaymentStatus.PAID || payment.getPaymentMethod() == PaymentMethod.CASH) {
             return paymentMapper.toResponseDto(payment);
         }
-        BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
-        if (result.paid() && isValidBakongConfirmation(payment, result)) return confirmPaymentInternal(id, true);
-        if (result.paid() || !result.authoritative()) {
+        PaymentResponseDto verification = withVerificationLock(id,
+                () -> checkStatusInternal(id, PaymentVerificationSource.MANUAL));
+        if (verification.status() == PaymentStatus.PAID) return verification;
+        payment = paymentRepository.findByIdForUpdate(id).orElseThrow();
+        if (payment.getLastVerificationError() != null) {
             throw new IllegalStateException("Payment verification is unavailable. Check again before switching to cash");
         }
         if (booking.getStatus() != BookingStatus.PENDING) {
@@ -423,86 +436,206 @@ public class PaymentServiceImpl implements PaymentService {
         ));
     }
 
-    @Override
-    @Transactional
-    public PaymentResponseDto prepareKhqr(Long id, PrepareKhqrRequestDto request) {
-        Payment payment = paymentRepository.findByIdForUpdate(id)
+    private PaymentResponseDto checkStatusInternal(Long id, PaymentVerificationSource source) {
+        Payment snapshot = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
-        authorizationService.requireOwnerOrStaff(payment.getCustomer());
-        if (Objects.equals(payment.getKhqrString(), request.qr()) && Objects.equals(payment.getMd5Hash(), request.md5())) {
-            return paymentMapper.toResponseDto(payment);
+        if (snapshot.getBooking() != null) {
+            bookingRepository.findByIdForUpdate(snapshot.getBooking().getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Booking", snapshot.getBooking().getId()));
         }
-        if (payment.getPaymentMethod() != PaymentMethod.KHQR || payment.getStatus() != PaymentStatus.PENDING
-                || payment.isClientQrPrepared() || !Objects.equals(payment.getMd5Hash(), request.expectedMd5())) {
-            throw new IllegalStateException("The payment QR is already prepared or no longer pending");
-        }
-        KhqrPayloadValidator.validate(payment.getKhqrString(), request.qr(), request.md5(), System.currentTimeMillis());
-        payment.setKhqrString(request.qr());
-        payment.setMd5Hash(request.md5().toLowerCase(Locale.ROOT));
-        payment.setClientQrPrepared(true);
-        return paymentMapper.toResponseDto(paymentRepository.save(payment));
-    }
-
-    private PaymentResponseDto checkStatusInternal(Long id) {
-        Payment payment = paymentRepository.findById(id)
+        Payment payment = paymentRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
 
         if (payment.getStatus() == PaymentStatus.PAID) {
             activateMembershipIfNeeded(payment);
             return paymentMapper.toResponseDto(payment);
         }
-
-        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
-        BakongCheckResult result = null;
-
-        if (shouldCheckBakong(payment)) {
-            log.debug("Checking Bakong payment: paymentId={}, bookingId={}, md5={}",
-                    payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
-                    maskHash(payment.getMd5Hash()));
-            result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
-            log.debug("Bakong status result: paymentId={}, bookingId={}, transactionId={}, md5={}, status={}, authoritative={}, retryable={}",
-                    payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
-                    payment.getTransactionId(), maskHash(payment.getMd5Hash()), result.status(), result.authoritative(),
-                    result.retryable());
-            if (result.paid()) {
-                if (!isValidBakongConfirmation(payment, result)) {
-                    log.warn("Bakong confirmation validation failed; payment remains unconfirmed: paymentId={}, bookingId={}, transactionId={}, md5={}",
-                            payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
-                            payment.getTransactionId(), maskHash(payment.getMd5Hash()));
-                } else {
-                    log.info("Bakong payment confirmed: paymentId={}, bookingId={}, transactionId={}, md5={}",
-                            payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
-                            payment.getTransactionId(), maskHash(payment.getMd5Hash()));
-                    return confirmPaymentInternal(id, true);
-                }
-            }
-        }
-
-        payment = paymentRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment", id));
-        if (payment.getStatus() != PaymentStatus.PENDING) {
+        // PAID, FAILED and EXPIRED are terminal for provider polling. Late
+        // reconciliation must be an explicit administrative workflow.
+        if (!shouldCheckBakong(payment)) {
             return paymentMapper.toResponseDto(payment);
         }
 
-        if (payment.getExpiresAt() != null && !now.isBefore(payment.getExpiresAt())) {
-            // A PAID response that fails validation is not proof that the
-            // payment is unpaid. Keep it pending so the next poll can retry
-            // instead of expiring a potentially valid customer payment.
-            if (result != null && result.authoritative() && !result.paid()) {
-                return expirePaymentInternal(payment);
-            }
-            // A transport/configuration/token failure is not proof that the
-            // customer did not pay. Keep PENDING and let polling retry.
-            log.warn("Bakong check was inconclusive after expiry; keeping payment PENDING: paymentId={}, md5={}, status={}, retryable={}",
-                    payment.getId(), maskHash(payment.getMd5Hash()), result != null ? result.status() : null,
-                    result != null && result.retryable());
+        LocalDateTime now = LocalDateTime.now(PHNOM_PENH_ZONE);
+        ensureLegacyVerificationState(payment, now);
+        if (!isVerificationDue(payment, source, now)) {
+            return paymentMapper.toResponseDto(paymentRepository.save(payment));
         }
 
+        payment.setLastVerificationAt(now);
+        payment.setVerificationAttemptCount(payment.getVerificationAttemptCount() + 1);
+        if (source == PaymentVerificationSource.MANUAL) {
+            payment.setManualVerificationCount(payment.getManualVerificationCount() + 1);
+        } else if (source == PaymentVerificationSource.SCHEDULED && !isExpired(payment, now)) {
+            payment.setScheduledVerificationCount(payment.getScheduledVerificationCount() + 1);
+        }
+        paymentRepository.save(payment);
+
+        log.info("Bakong verification started: paymentId={}, source={}, attempt={}, manualAttempts={}",
+                payment.getId(), source, payment.getVerificationAttemptCount(), payment.getManualVerificationCount());
+        BakongCheckResult result = bakongService.checkTransactionByMd5(payment.getMd5Hash());
+        log.info("Bakong verification finished: paymentId={}, status={}, authoritative={}, retryable={}, rateLimited={}",
+                payment.getId(), result.status(), result.authoritative(), result.retryable(), result.rateLimited());
+
+        if (result.rateLimited()) {
+            LocalDateTime cooldown = bakongRequestBudgetService.markRateLimited(result.retryAfterSeconds());
+            payment.setRateLimitedUntil(cooldown);
+            payment.setNextVerificationAt(cooldown);
+            payment.setLastVerificationError("Bakong verification is temporarily unavailable. Please try again later.");
+            paymentRepository.save(payment);
+            return paymentMapper.toResponseDto(payment);
+        }
+
+        payment.setRateLimitedUntil(null);
+        if (result.paid()) {
+            if (isValidBakongConfirmation(payment, result)) {
+                payment.setLastVerificationError(null);
+                paymentRepository.save(payment);
+                log.info("Bakong payment confirmed: paymentId={}, bookingId={}, transactionId={}, md5={}",
+                        payment.getId(), payment.getBooking() != null ? payment.getBooking().getId() : null,
+                        payment.getTransactionId(), maskHash(payment.getMd5Hash()));
+                return confirmPaymentInternal(id, false);
+            }
+            result = BakongCheckResult.verificationError(payment.getMd5Hash(),
+                    "Bakong confirmation did not match the payment record");
+        }
+
+        if (!result.authoritative()) {
+            recordTemporaryVerificationError(payment, result, now);
+            return paymentMapper.toResponseDto(paymentRepository.save(payment));
+        }
+
+        payment.setLastVerificationError(null);
+        payment.setVerificationFailureCount(0);
+        payment.setNextVerificationAt(nextScheduledVerificationAt(payment, now));
+        paymentRepository.save(payment);
+
+        if (isExpired(payment, now)) {
+            return expirePaymentInternal(payment);
+        }
         return paymentMapper.toResponseDto(payment);
     }
 
     private void markPendingAttemptFailed(Payment payment) {
         markPendingTransactions(payment, PaymentStatus.FAILED);
+    }
+
+    private PaymentResponseDto withVerificationLock(Long paymentId, Supplier<PaymentResponseDto> action) {
+        ReentrantLock lock = verificationLocks.computeIfAbsent(paymentId, ignored -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            log.debug("Duplicate Bakong verification blocked by per-payment lock: paymentId={}", paymentId);
+            Payment payment = paymentRepository.findById(paymentId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Payment", paymentId));
+            return paymentMapper.toResponseDto(payment);
+        }
+        try {
+            return action.get();
+        } finally {
+            lock.unlock();
+            if (!lock.hasQueuedThreads()) {
+                verificationLocks.remove(paymentId, lock);
+            }
+        }
+    }
+
+    private boolean isVerificationDue(Payment payment, PaymentVerificationSource source, LocalDateTime now) {
+        if (payment.getRateLimitedUntil() != null && now.isBefore(payment.getRateLimitedUntil())) {
+            return false;
+        }
+        if (source == PaymentVerificationSource.MANUAL
+                && payment.getManualVerificationCount() >= MAX_MANUAL_CHECKS) {
+            payment.setLastVerificationError("The manual payment check limit has been reached.");
+            return false;
+        }
+        if (source == PaymentVerificationSource.FINAL && !isExpired(payment, now)) {
+            return false;
+        }
+        if (source == PaymentVerificationSource.SCHEDULED
+                && payment.getNextVerificationAt() != null
+                && now.isBefore(payment.getNextVerificationAt())) {
+            return false;
+        }
+        if (source != PaymentVerificationSource.FINAL && source != PaymentVerificationSource.SYSTEM
+                && payment.getLastVerificationAt() != null) {
+            int interval = Math.max(1, khqrConfig.getMinVerificationIntervalSeconds());
+            if (now.isBefore(payment.getLastVerificationAt().plusSeconds(interval))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void recordTemporaryVerificationError(
+            Payment payment,
+            BakongCheckResult result,
+            LocalDateTime now
+    ) {
+        int failures = payment.getVerificationFailureCount() + 1;
+        payment.setVerificationFailureCount(failures);
+        payment.setLastVerificationError(result.message() != null && !result.message().isBlank()
+                ? result.message()
+                : "Bakong verification is temporarily unavailable. Please try again later.");
+
+        int base = Math.max(1, khqrConfig.getTemporaryErrorBackoffSeconds());
+        int maximum = Math.max(base, khqrConfig.getMaxTemporaryErrorBackoffSeconds());
+        long exponential = Math.min(maximum, base * (1L << Math.min(failures - 1, 10)));
+        long retryAfter = result.retryAfterSeconds() != null ? result.retryAfterSeconds() : 0L;
+        LocalDateTime retryAt = now.plusSeconds(Math.max(exponential, retryAfter));
+        payment.setNextVerificationAt(retryAt);
+        log.warn("Bakong verification deferred after temporary error: paymentId={}, failures={}, nextVerificationAt={}",
+                payment.getId(), failures, retryAt);
+    }
+
+    private void initializeVerificationState(Payment payment, LocalDateTime now) {
+        payment.setVerificationStartedAt(now);
+        payment.setLastVerificationAt(null);
+        payment.setNextVerificationAt(now.plusSeconds(SCHEDULED_VERIFICATION_SECONDS[0]));
+        payment.setVerificationAttemptCount(0);
+        payment.setScheduledVerificationCount(0);
+        payment.setManualVerificationCount(0);
+        payment.setVerificationFailureCount(0);
+        payment.setLastVerificationError(null);
+        payment.setRateLimitedUntil(null);
+    }
+
+    private void clearVerificationState(Payment payment) {
+        payment.setVerificationStartedAt(null);
+        payment.setLastVerificationAt(null);
+        payment.setNextVerificationAt(null);
+        payment.setVerificationAttemptCount(0);
+        payment.setScheduledVerificationCount(0);
+        payment.setManualVerificationCount(0);
+        payment.setVerificationFailureCount(0);
+        payment.setLastVerificationError(null);
+        payment.setRateLimitedUntil(null);
+    }
+
+    private void ensureLegacyVerificationState(Payment payment, LocalDateTime now) {
+        if (payment.getVerificationStartedAt() == null) {
+            // Existing rows predate persisted scheduling metadata. Give each
+            // one a single due slot, then move it onto the normal cadence.
+            payment.setVerificationStartedAt(now.minusSeconds(SCHEDULED_VERIFICATION_SECONDS[0]));
+        }
+        if (payment.getNextVerificationAt() == null && !isExpired(payment, now)) {
+            payment.setNextVerificationAt(now);
+        }
+    }
+
+    private LocalDateTime nextScheduledVerificationAt(Payment payment, LocalDateTime now) {
+        LocalDateTime startedAt = payment.getVerificationStartedAt() != null
+                ? payment.getVerificationStartedAt() : now;
+        for (int seconds : SCHEDULED_VERIFICATION_SECONDS) {
+            LocalDateTime candidate = startedAt.plusSeconds(seconds);
+            if (candidate.isAfter(now)) return candidate;
+        }
+        if (payment.getExpiresAt() != null && payment.getExpiresAt().isAfter(now)) {
+            return payment.getExpiresAt();
+        }
+        return now;
+    }
+
+    private boolean isExpired(Payment payment, LocalDateTime now) {
+        return payment.getExpiresAt() != null && !now.isBefore(payment.getExpiresAt());
     }
 
     private void markPendingTransactions(Payment payment, PaymentStatus status) {
@@ -516,9 +649,7 @@ public class PaymentServiceImpl implements PaymentService {
         if (payment.getPaymentMethod() != PaymentMethod.KHQR || payment.getMd5Hash() == null) {
             return false;
         }
-        return payment.getStatus() == PaymentStatus.PENDING
-                || payment.getStatus() == PaymentStatus.FAILED
-                || payment.getStatus() == PaymentStatus.EXPIRED;
+        return payment.getStatus() == PaymentStatus.PENDING;
     }
 
     private PaymentResponseDto expirePaymentInternal(Payment payment) {

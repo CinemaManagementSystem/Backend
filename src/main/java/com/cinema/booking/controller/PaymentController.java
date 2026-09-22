@@ -2,15 +2,15 @@ package com.cinema.booking.controller;
 
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
-import com.cinema.booking.dto.payments.VerifyKhqrRequestDto;
-import com.cinema.booking.dto.payments.PrepareKhqrRequestDto;
 import com.cinema.booking.service.PaymentService;
+import com.cinema.booking.enums.PaymentVerificationSource;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Locale;
 
 @RestController
 @RequestMapping("/api/payments")
@@ -31,24 +31,25 @@ public class PaymentController {
     }
 
     @GetMapping("/{id}/status")
-    public ResponseEntity<PaymentResponseDto> checkStatus(@PathVariable Long id) {
-        return ResponseEntity.ok(paymentService.checkStatus(id));
-    }
-
-    @PostMapping("/verify-khqr")
-    public ResponseEntity<PaymentResponseDto> verifyKhqr(@Valid @RequestBody VerifyKhqrRequestDto request) {
-        return ResponseEntity.ok(paymentService.verifyKhqr(request));
+    public ResponseEntity<PaymentResponseDto> checkStatus(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "MANUAL") String source
+    ) {
+        PaymentVerificationSource requestSource;
+        try {
+            requestSource = PaymentVerificationSource.valueOf(source.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Unsupported payment verification source");
+        }
+        if (requestSource == PaymentVerificationSource.SYSTEM) {
+            throw new IllegalArgumentException("SYSTEM payment verification is internal only");
+        }
+        return ResponseEntity.ok(paymentService.checkStatus(id, requestSource));
     }
 
     @PostMapping("/{id}/switch-to-cash")
     public ResponseEntity<PaymentResponseDto> switchToCash(@PathVariable Long id) {
         return ResponseEntity.ok(paymentService.switchToCash(id));
-    }
-
-    @PostMapping("/{id}/prepare-khqr")
-    public ResponseEntity<PaymentResponseDto> prepareKhqr(@PathVariable Long id,
-            @Valid @RequestBody PrepareKhqrRequestDto request) {
-        return ResponseEntity.ok(paymentService.prepareKhqr(id, request));
     }
 
     @PutMapping("/{id}")

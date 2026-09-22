@@ -2,9 +2,8 @@ package com.cinema.booking.service;
 
 import com.cinema.booking.dto.payments.PaymentRequestDto;
 import com.cinema.booking.dto.payments.PaymentResponseDto;
-import com.cinema.booking.dto.payments.VerifyKhqrRequestDto;
-import com.cinema.booking.dto.payments.PrepareKhqrRequestDto;
 import java.util.List;
+import com.cinema.booking.enums.PaymentVerificationSource;
 
 public interface PaymentService {
 
@@ -15,9 +14,9 @@ public interface PaymentService {
     PaymentResponseDto confirmPayment(Long id);
     PaymentResponseDto confirmPaymentFromSystem(Long id);
     PaymentResponseDto checkStatus(Long id);
+    PaymentResponseDto checkStatus(Long id, PaymentVerificationSource source);
     PaymentResponseDto checkStatusFromSystem(Long id);
-    PaymentResponseDto verifyKhqr(VerifyKhqrRequestDto request);
+    PaymentResponseDto checkStatusFromSystem(Long id, PaymentVerificationSource source);
     PaymentResponseDto switchToCash(Long id);
-    PaymentResponseDto prepareKhqr(Long id, PrepareKhqrRequestDto request);
     void delete(Long id);
 }

@@ -11,7 +11,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 @Entity
-@Table(name = "payment_transactions")
+@Table(name = "payment_transactions", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_payment_transaction_reference", columnNames = {"payment_id", "reference"})
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

@@ -4,14 +4,15 @@ import com.cinema.booking.config.KhqrConfig;
 import com.cinema.booking.dto.payments.BakongCheckResult;
 import com.cinema.booking.dto.payments.KhqrPayload;
 import com.cinema.booking.service.BakongService;
+import com.cinema.booking.service.BakongRequestBudgetService;
 import jakarta.annotation.PostConstruct;
 import kh.gov.nbc.bakong_khqr.BakongKHQR;
 import kh.gov.nbc.bakong_khqr.model.IndividualInfo;
 import kh.gov.nbc.bakong_khqr.model.KHQRCurrency;
 import kh.gov.nbc.bakong_khqr.model.KHQRData;
 import kh.gov.nbc.bakong_khqr.model.KHQRResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -25,13 +26,15 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Base64;
 import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class BakongServiceImpl implements BakongService {
 
     private static final ZoneId PHNOM_PENH_ZONE = ZoneId.of("Asia/Phnom_Penh");
@@ -52,12 +55,26 @@ public class BakongServiceImpl implements BakongService {
     private static final int MAX_BILL_NUMBER_LENGTH = 25;
     private static final int MAX_STORE_LABEL_LENGTH = 25;
     private static final int MAX_LIVE_CHECK_ATTEMPTS = 2;
+    private static final String PRODUCTION_BASE_URL = "https://api-bakong.nbc.gov.kh";
+    private static final String SIT_BASE_URL = "https://sit-api-bakong.nbc.gov.kh";
     /** Refresh the token this many seconds before its stated expiry to avoid
      *  clock-skew races at the boundary. */
     private static final int TOKEN_EXPIRY_BUFFER_SECONDS = 60;
 
     private final KhqrConfig khqrConfig;
+    private final BakongRequestBudgetService requestBudgetService;
     private final RestClient restClient = RestClient.builder().build();
+
+    @Autowired
+    public BakongServiceImpl(KhqrConfig khqrConfig, BakongRequestBudgetService requestBudgetService) {
+        this.khqrConfig = khqrConfig;
+        this.requestBudgetService = requestBudgetService;
+    }
+
+    /** Test-friendly constructor; production always uses the database-backed budget. */
+    public BakongServiceImpl(KhqrConfig khqrConfig) {
+        this(khqrConfig, null);
+    }
 
     // -----------------------------------------------------------------------
     // Token cache — refreshed automatically when stale or after a 401.
@@ -104,13 +121,18 @@ public class BakongServiceImpl implements BakongService {
         }
         if (!hasEmail) {
             throw new IllegalStateException("Required Bakong credentials are missing: bakong.email is required "
-                    + "for live token renewal via POST /v1/renew_token");
+                    + "for live token request/renewal");
         }
         if (!hasStaticToken) {
+            if (!hasText(khqrConfig.getOrganization()) || !hasText(khqrConfig.getProject())) {
+                throw new IllegalStateException("Required Bakong credentials are missing: bakong.organization and "
+                        + "bakong.project are required for initial token registration when bakong.token is empty");
+            }
             log.info("Bakong static bootstrap token is not configured; first live verification will request a token "
-                    + "from POST /v1/renew_token");
+                    + "from POST /v1/request_token and may require POST /v1/verify");
         }
-        log.info("Bakong automatic token refresh uses official NBC endpoint POST /v1/renew_token with BAKONG_EMAIL.");
+        log.info("Bakong token lifecycle uses POST /v1/request_token for initial registration, "
+                + "POST /v1/verify for email code verification, and POST /v1/renew_token only for an existing token.");
 
         String baseUrl = khqrConfig.getBaseUrl();
         if (hasText(baseUrl)) {
@@ -123,7 +145,7 @@ public class BakongServiceImpl implements BakongService {
         }
 
         // Seed the in-memory cache from the static bootstrap token so the very
-        // first request does not need a round-trip to /v1/renew_token.
+        // first request does not need an initial registration round-trip.
         if (hasStaticToken) {
             String clean = cleanToken(khqrConfig.getToken());
             long exp = extractJwtExpiry(clean);
@@ -260,6 +282,15 @@ public class BakongServiceImpl implements BakongService {
             Map<?, ?> response = null;
             for (int attempt = 1; attempt <= MAX_LIVE_CHECK_ATTEMPTS; attempt++) {
                 try {
+                    if (requestBudgetService != null) {
+                        BakongRequestBudgetService.Permit permit = requestBudgetService.tryAcquire();
+                        if (!permit.allowed()) {
+                            log.warn("Bakong verification skipped by global request budget: retryAfterSeconds={}",
+                                    permit.retryAfterSeconds());
+                            return BakongCheckResult.rateLimited(normalizedMd5, permit.message(),
+                                    permit.retryAfterSeconds());
+                        }
+                    }
                     log.info("Bakong verification attempt {}/{}: md5={}", attempt, MAX_LIVE_CHECK_ATTEMPTS,
                             maskHash(normalizedMd5));
                     boolean hasAuthHeader = hasText(token);
@@ -278,6 +309,14 @@ public class BakongServiceImpl implements BakongService {
                 } catch (RestClientResponseException ex) {
                     log.warn("Bakong verification HTTP status: {} (attempt {})",
                             ex.getStatusCode().value(), attempt);
+
+                    Long retryAfterSeconds = retryAfterSeconds(ex);
+                    if (ex.getStatusCode().value() == 429) {
+                        log.warn("Bakong verification rate limited; retryAfterSeconds={}", retryAfterSeconds);
+                        return BakongCheckResult.rateLimited(normalizedMd5,
+                                "Bakong verification is temporarily unavailable. Please try again later.",
+                                retryAfterSeconds);
+                    }
 
                     if (ex.getStatusCode().value() == 401 && attempt < MAX_LIVE_CHECK_ATTEMPTS) {
                         log.warn("Bakong verification returned HTTP 401 on attempt {}; "
@@ -311,7 +350,7 @@ public class BakongServiceImpl implements BakongService {
 
             if (response == null) {
                 log.warn("Bakong API returned an empty response for MD5 {}", maskHash(normalizedMd5));
-                return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+                return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
             }
 
             return interpretResponse(response, normalizedMd5);
@@ -319,15 +358,21 @@ public class BakongServiceImpl implements BakongService {
         } catch (RestClientResponseException ex) {
             log.warn("Bakong API returned a retryable error while checking MD5 {}: status={}, responseBodyPresent={}",
                     maskHash(normalizedMd5), ex.getStatusCode(), hasText(ex.getResponseBodyAsString()));
-            return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+            Long retryAfterSeconds = retryAfterSeconds(ex);
+            if (ex.getStatusCode().value() == 429) {
+                return BakongCheckResult.rateLimited(normalizedMd5,
+                        "Bakong verification is temporarily unavailable. Please try again later.",
+                        retryAfterSeconds);
+            }
+            return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE, retryAfterSeconds);
         } catch (RestClientException ex) {
             log.warn("Failed to check Bakong transaction by MD5 {} from live API: {}",
                     maskHash(normalizedMd5), ex.getMessage());
-            return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+            return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         } catch (Exception ex) {
             log.warn("Unexpected failure while checking Bakong transaction by MD5 {}: {}",
                     maskHash(normalizedMd5), ex.getMessage());
-            return BakongCheckResult.pending(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
+            return BakongCheckResult.verificationError(normalizedMd5, LIVE_CHECK_ERROR_MESSAGE);
         }
     }
 
@@ -339,7 +384,8 @@ public class BakongServiceImpl implements BakongService {
      * Returns a usable Bakong JWT.
      * <ol>
      *   <li>If the in-memory token is present and not about to expire → return it (source=cache).</li>
-     *   <li>Otherwise fetch a new token from {@code /v1/renew_token} and return it (source=refresh).</li>
+     *   <li>If no token exists, start the {@code /v1/request_token} registration flow.</li>
+     *   <li>If an existing token expired, fetch a new token from {@code /v1/renew_token}.</li>
      *   <li>If refresh fails, return {@code null}; stale tokens are not reused.</li>
      * </ol>
      */
@@ -362,7 +408,12 @@ public class BakongServiceImpl implements BakongService {
             return cachedToken;
         }
 
-        log.info("Bakong token source: refresh (cached={}, callerHint={})", hasText(cachedToken), callerHint);
+        if (!hasText(cachedToken)) {
+            log.info("Bakong token source: initial-request (cached=false, callerHint={})", callerHint);
+            return requestInitialToken();
+        }
+
+        log.info("Bakong token source: refresh (cached=true, callerHint={})", callerHint);
         String fresh = requestNewToken();
         if (hasText(fresh)) {
             return fresh;
@@ -373,8 +424,99 @@ public class BakongServiceImpl implements BakongService {
     }
 
     /**
-     * Calls official NBC Bakong {@code POST /v1/renew_token} with email,
-     * stores the returned JWT in cache, and returns it.
+     * Starts the official NBC Bakong initial token registration flow.
+     * This does not call /v1/renew_token because renewal is only for already
+     * registered/expired tokens.
+     */
+    public String requestInitialToken() {
+        String email = khqrConfig.getEmail();
+        String organization = khqrConfig.getOrganization();
+        String project = khqrConfig.getProject();
+
+        if (!hasText(email) || !hasText(organization) || !hasText(project)) {
+            log.warn("Bakong initial token request skipped: email/organization/project must be configured.");
+            return null;
+        }
+
+        String tokenUrl = khqrConfig.getBaseUrl() + "/v1/request_token";
+        Map<String, String> requestBody = Map.of(
+                "email", email,
+                "organization", organization,
+                "project", project
+        );
+
+        log.info("Bakong initial token request started: endpoint={}", tokenUrl);
+
+        try {
+            Map<?, ?> body = createRestClient().post()
+                    .uri(tokenUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(requestBody)
+                    .retrieve()
+                    .body(Map.class);
+
+            log.info("Bakong initial token request HTTP status: 200");
+            String token = extractAndCacheToken(body, "initial-token");
+            if (hasText(token)) {
+                return token;
+            }
+
+            if (body != null && isSuccessResponse(body.get("responseCode"))) {
+                log.warn("Bakong initial token request accepted but no token was returned. "
+                        + "Check the registered email for the 20-character verification code.");
+            }
+
+            if (hasText(khqrConfig.getVerificationCode())) {
+                return verifyInitialToken();
+            }
+            log.warn("Bakong verification code is not configured; set BAKONG_VERIFICATION_CODE after receiving the email code.");
+            return null;
+        } catch (RestClientResponseException ex) {
+            log.warn("Bakong initial token request HTTP status: {} — initial token request failed",
+                    ex.getStatusCode().value());
+            return null;
+        } catch (RestClientException ex) {
+            log.warn("Bakong initial token request network error: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Verifies the email code from /v1/request_token and caches the issued token.
+     */
+    public String verifyInitialToken() {
+        String code = khqrConfig.getVerificationCode();
+        if (!hasText(code)) {
+            log.warn("Bakong token verification skipped: verification code is not configured.");
+            return null;
+        }
+
+        String tokenUrl = khqrConfig.getBaseUrl() + "/v1/verify";
+        log.info("Bakong token verification started: endpoint={}", tokenUrl);
+
+        try {
+            Map<?, ?> body = createRestClient().post()
+                    .uri(tokenUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("code", code.trim()))
+                    .retrieve()
+                    .body(Map.class);
+
+            log.info("Bakong token verification HTTP status: 200");
+            return extractAndCacheToken(body, "verify-token");
+        } catch (RestClientResponseException ex) {
+            log.warn("Bakong token verification HTTP status: {} — token verification failed",
+                    ex.getStatusCode().value());
+            return null;
+        } catch (RestClientException ex) {
+            log.warn("Bakong token verification network error: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Calls official NBC Bakong {@code POST /v1/renew_token} with email for
+     * an existing registered token, stores the returned JWT in cache, and returns it.
      */
     public String requestNewToken() {
         String email = khqrConfig.getEmail();
@@ -399,49 +541,7 @@ public class BakongServiceImpl implements BakongService {
 
             log.info("Bakong token request HTTP status: 200");
 
-            if (body == null) {
-                log.warn("Bakong token endpoint returned null body");
-                return null;
-            }
-
-            // Bakong response: {"responseCode":0,"responseMessage":"","data":{"token":"eyJ..."}}
-            Object responseCode = body.get("responseCode");
-            if (!isSuccessResponse(responseCode)) {
-                log.warn("Bakong token request returned non-zero responseCode: {}",
-                        body.get("responseMessage"));
-                return null;
-            }
-
-            String rawToken = null;
-            Object data = body.get("data");
-            if (data instanceof Map<?, ?> dataMap) {
-                rawToken = asString(dataMap.get("token"));
-            }
-            if (!hasText(rawToken)) {
-                rawToken = asString(body.get("token"));
-            }
-
-            if (!hasText(rawToken)) {
-                log.warn("Bakong token endpoint did not return a token value");
-                return null;
-            }
-
-            // Clean quotes, whitespace, and "Bearer " prefix if decorated.
-            String clean = cleanToken(rawToken);
-            long exp     = extractJwtExpiry(clean);
-
-            this.cachedToken              = clean;
-            this.tokenExpiryEpochSeconds  = exp;
-
-            log.info("Bakong token received successfully: tokenLength={}, tokenExpiryEpochSeconds={}",
-                    clean.length(), exp > 0 ? exp : "not-parsed");
-            if (exp > 0) {
-                LocalDateTime expiryTime = LocalDateTime.ofInstant(
-                        Instant.ofEpochSecond(exp), PHNOM_PENH_ZONE);
-                log.info("Bakong token expiry time (Asia/Phnom_Penh): {}", expiryTime);
-            }
-
-            return clean;
+            return extractAndCacheToken(body, "renew-token");
 
         } catch (RestClientResponseException ex) {
             log.warn("Bakong token request HTTP status: {} — token refresh failed",
@@ -462,6 +562,55 @@ public class BakongServiceImpl implements BakongService {
         this.cachedToken             = null;
         this.tokenExpiryEpochSeconds = 0;
         this.bootstrapTokenInvalidated = true;
+    }
+
+    private String extractAndCacheToken(Map<?, ?> body, String source) {
+        if (body == null) {
+            log.warn("Bakong {} endpoint returned null body", source);
+            return null;
+        }
+
+        Object responseCode = body.get("responseCode");
+        String responseMessage = asString(body.get("responseMessage"));
+        log.info("Bakong {} response: responseCode={}, responseMessage={}",
+                source, responseCode, responseMessage);
+
+        if (!isSuccessResponse(responseCode)) {
+            log.warn("Bakong {} returned non-zero responseCode: {}", source, responseMessage);
+            return null;
+        }
+
+        String rawToken = null;
+        Object data = body.get("data");
+        if (data instanceof Map<?, ?> dataMap) {
+            rawToken = asString(dataMap.get("token"));
+        }
+        if (!hasText(rawToken)) {
+            rawToken = asString(body.get("token"));
+        }
+
+        boolean tokenAvailable = hasText(rawToken);
+        log.info("Bakong {} token available: {}", source, tokenAvailable);
+        if (!tokenAvailable) {
+            return null;
+        }
+
+        String clean = cleanToken(rawToken);
+        long exp = extractJwtExpiry(clean);
+
+        this.cachedToken = clean;
+        this.tokenExpiryEpochSeconds = exp;
+        this.bootstrapTokenInvalidated = false;
+
+        log.info("Bakong token received successfully: source={}, tokenLength={}, tokenExpiryEpochSeconds={}",
+                source, clean.length(), exp > 0 ? exp : "not-parsed");
+        if (exp > 0) {
+            LocalDateTime expiryTime = LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(exp), PHNOM_PENH_ZONE);
+            log.info("Bakong token expiry time (Asia/Phnom_Penh): {}", expiryTime);
+        }
+
+        return clean;
     }
 
     // -----------------------------------------------------------------------
@@ -524,7 +673,7 @@ public class BakongServiceImpl implements BakongService {
 
         if (isRateLimitedResponse(responseMessage)) {
             log.warn("Bakong API rate limit reached while checking MD5 {}: {}", maskHash(md5), responseMessage);
-            return BakongCheckResult.verificationError(md5, responseMessage);
+            return BakongCheckResult.rateLimited(md5, responseMessage, null);
         }
 
         if (isNotFoundResponse(responseMessage)) {
@@ -728,6 +877,23 @@ public class BakongServiceImpl implements BakongService {
         if (!hasText(msg)) return false;
         String n = msg.toLowerCase(Locale.ROOT);
         return n.contains("daily request limit") || n.contains("rate limit") || n.contains("too many request");
+    }
+
+    private Long retryAfterSeconds(RestClientResponseException ex) {
+        if (ex.getResponseHeaders() == null) return null;
+        String value = ex.getResponseHeaders().getFirst("Retry-After");
+        if (!hasText(value)) return null;
+        try {
+            return Math.max(1L, Long.parseLong(value.trim()));
+        } catch (NumberFormatException ignored) {
+            try {
+                ZonedDateTime retryAt = ZonedDateTime.parse(value.trim(), DateTimeFormatter.RFC_1123_DATE_TIME);
+                return Math.max(1L, retryAt.toEpochSecond() - Instant.now().getEpochSecond());
+            } catch (DateTimeParseException ignoredDate) {
+                log.warn("Bakong returned an invalid Retry-After header");
+                return null;
+            }
+        }
     }
 
     private String safeStatusMessage(String message) {

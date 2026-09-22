@@ -33,7 +33,13 @@ public class PaymentMapper {
                 payment.getBooking() != null ? payment.getBooking().getId() : null,
                 payment.getCustomer() != null ? payment.getCustomer().getId() : null,
                 payment.getOrder() != null ? payment.getOrder().getId() : null,
-                payment.getUserMembership() != null ? payment.getUserMembership().getId() : null
+                payment.getUserMembership() != null ? payment.getUserMembership().getId() : null,
+                payment.getLastVerificationAt(),
+                payment.getNextVerificationAt(),
+                payment.getVerificationAttemptCount(),
+                payment.getManualVerificationCount(),
+                payment.getLastVerificationError(),
+                payment.getRateLimitedUntil()
         );
     }
 }
