@@ -28,6 +28,12 @@ public class Theater {
     @Column(name = "status", nullable = false)
     private String status;
 
+    @Column(name = "image_url", nullable = true, length = 1000)
+    private String imageUrl;
+
+    @Column(name = "image_public_id", length = 500)
+    private String imagePublicId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "location_id", nullable = false)
     private Location location;

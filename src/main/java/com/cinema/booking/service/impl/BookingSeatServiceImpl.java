@@ -7,6 +7,7 @@ import com.cinema.booking.enums.BookingStatus;
 import com.cinema.booking.dto.bookings.BookingSeatRequestDto;
 import com.cinema.booking.dto.bookings.BookingSeatResponseDto;
 import com.cinema.booking.exception.ResourceNotFoundException;
+import com.cinema.booking.exception.SeatUnavailableException;
 import com.cinema.booking.mapper.BookingSeatMapper;
 import com.cinema.booking.repository.BookingSeatRepository;
 import com.cinema.booking.repository.BookingRepository;
@@ -29,6 +30,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BookingSeatServiceImpl implements BookingSeatService {
 
+    // PENDING is the existing persisted name for the HELD state. CONFIRMED is
+    // BOOKED and CANCELLED is RELEASED; keeping these names preserves clients.
     private static final String DEFAULT_STATUS = "PENDING";
 
     private final BookingSeatRepository bookingSeatRepository;
@@ -56,6 +59,7 @@ public class BookingSeatServiceImpl implements BookingSeatService {
         BookingSeat bookingSeat = bookingSeatMapper.toEntity(dto);
         bookingSeat.setBooking(booking);
         bookingSeat.setSeat(seat);
+        bookingSeat.setShowId(booking.getShow().getId());
         applyMembershipTicketSnapshot(bookingSeat, booking.getCustomer(), seat.getPrice());
         bookingSeat.setStatus(DEFAULT_STATUS);
         bookingSeat.setExpiresAt(booking.getExpiresAt());
@@ -99,6 +103,7 @@ public class BookingSeatServiceImpl implements BookingSeatService {
         updated.setId(existing.getId());
         updated.setBooking(booking);
         updated.setSeat(seat);
+        updated.setShowId(booking.getShow().getId());
         if (isSameSeat(existing, booking, seat)) {
             copyPricingSnapshot(existing, updated);
         } else {
@@ -127,7 +132,7 @@ public class BookingSeatServiceImpl implements BookingSeatService {
                 seat.getId(),
                 excludedBookingSeatId
         )) {
-            throw new IllegalStateException("Seat is already reserved for this show");
+            throw new SeatUnavailableException(booking.getShow().getId(), seat.getId());
         }
     }
 

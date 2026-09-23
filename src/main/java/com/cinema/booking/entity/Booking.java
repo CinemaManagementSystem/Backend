@@ -29,6 +29,14 @@ public class Booking {
     @Column(name = "booking_code", nullable = false, unique = true)
     private String bookingCode;
 
+    /**
+     * Client retry key. It is unique per customer in the database migration so
+     * a browser retry can return the original pending booking instead of
+     * creating another checkout session.
+     */
+    @Column(name = "idempotency_key", length = 128)
+    private String idempotencyKey;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private BookingStatus status;

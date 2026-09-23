@@ -188,6 +188,7 @@ class PaymentBakongProductionMd5IntegrationTest {
         BookingSeat bookingSeat = new BookingSeat();
         bookingSeat.setBooking(booking);
         bookingSeat.setSeat(seat);
+        bookingSeat.setShowId(show.getId());
         bookingSeat.setPrice(new BigDecimal("0.30"));
         bookingSeat.setStatus("HELD");
         bookingSeatRepository.save(bookingSeat);

@@ -91,4 +91,14 @@ public class Payment {
     @JoinColumn(name = "user_membership_id", nullable = true)
     private UserMembership userMembership;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "promotion_id", nullable = true)
+    private Promotion promotion;
+
+    @Column(name = "promotion_code", length = 64)
+    private String promotionCode;
+
+    @Column(name = "discount_amount", precision = 12, scale = 2)
+    private BigDecimal discountAmount;
+
 }

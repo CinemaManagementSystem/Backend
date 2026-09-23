@@ -6,6 +6,7 @@ import com.cinema.booking.entity.Booking;
 import com.cinema.booking.entity.Order;
 import com.cinema.booking.dto.paymenttransaction.PaymentTransactionRequestDto;
 import com.cinema.booking.dto.paymenttransaction.PaymentTransactionResponseDto;
+import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
 import com.cinema.booking.mapper.PaymentTransactionMapper;
 import com.cinema.booking.repository.PaymentTransactionRepository;
@@ -14,16 +15,23 @@ import com.cinema.booking.repository.BookingRepository;
 import com.cinema.booking.repository.OrderRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.PaymentTransactionService;
+import com.cinema.booking.service.CloudinaryService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class PaymentTransactionServiceImpl implements PaymentTransactionService {
+
+    private static final String PAYMENT_TRANSACTION_IMAGE_FOLDER = "Cinema_Project/payment-transaction";
 
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final PaymentTransactionMapper paymentTransactionMapper;
@@ -31,10 +39,17 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
     private final BookingRepository bookingRepository;
     private final OrderRepository orderRepository;
     private final AuthorizationService authorizationService;
+    private final CloudinaryService cloudinaryService;
 
     @Override
     @Transactional
     public PaymentTransactionResponseDto create(PaymentTransactionRequestDto dto) {
+        return create(dto, null);
+    }
+
+    @Override
+    @Transactional
+    public PaymentTransactionResponseDto create(PaymentTransactionRequestDto dto, MultipartFile image) {
         authorizationService.requireStaffOrAdmin();
         PaymentTransaction transaction = paymentTransactionMapper.toEntity(dto);
 
@@ -59,6 +74,8 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
             transaction.setOrder(order);
         }
 
+        uploadImage(transaction, image);
+
         transaction = paymentTransactionRepository.save(transaction);
         return paymentTransactionMapper.toResponseDto(transaction);
     }
@@ -66,6 +83,12 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
     @Override
     @Transactional
     public PaymentTransactionResponseDto update(Long id, PaymentTransactionRequestDto dto) {
+        return update(id, dto, null);
+    }
+
+    @Override
+    @Transactional
+    public PaymentTransactionResponseDto update(Long id, PaymentTransactionRequestDto dto, MultipartFile image) {
         authorizationService.requireStaffOrAdmin();
         PaymentTransaction existing = paymentTransactionRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("PaymentTransaction", id));
@@ -97,6 +120,11 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
                     .orElseThrow(() -> new ResourceNotFoundException("Order", dto.getOrderId())));
         }
 
+        if (image != null && !image.isEmpty()) {
+            deleteImage(existing);
+            uploadImage(existing, image);
+        }
+
         existing = paymentTransactionRepository.save(existing);
         return paymentTransactionMapper.toResponseDto(existing);
     }
@@ -124,6 +152,25 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
 
     @Override
     @Transactional(readOnly = true)
+    public Page<PaymentTransactionResponseDto> getPage(PaymentStatus status, Pageable pageable) {
+        var currentUser = authorizationService.getCurrentUser();
+        Page<PaymentTransaction> transactions;
+
+        if (authorizationService.isStaffOrAdmin(currentUser)) {
+            transactions = status == null
+                    ? paymentTransactionRepository.findAll(pageable)
+                    : paymentTransactionRepository.findByStatus(status, pageable);
+        } else {
+            transactions = status == null
+                    ? paymentTransactionRepository.findByPaymentCustomerId(currentUser.getId(), pageable)
+                    : paymentTransactionRepository.findByPaymentCustomerIdAndStatus(currentUser.getId(), status, pageable);
+        }
+
+        return transactions.map(paymentTransactionMapper::toResponseDto);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<PaymentTransactionResponseDto> getByPaymentId(Long paymentId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", paymentId));
@@ -139,6 +186,22 @@ public class PaymentTransactionServiceImpl implements PaymentTransactionService 
         authorizationService.requireStaffOrAdmin();
         PaymentTransaction transaction = paymentTransactionRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("PaymentTransaction", id));
+        deleteImage(transaction);
         paymentTransactionRepository.delete(transaction);
+    }
+
+    private void uploadImage(PaymentTransaction transaction, MultipartFile image) {
+        if (image == null || image.isEmpty()) {
+            return;
+        }
+        Map<String, Object> result = cloudinaryService.upload(image, PAYMENT_TRANSACTION_IMAGE_FOLDER);
+        transaction.setImageUrl((String) result.get("secure_url"));
+        transaction.setImagePublicId((String) result.get("public_id"));
+    }
+
+    private void deleteImage(PaymentTransaction transaction) {
+        cloudinaryService.delete(transaction.getImagePublicId());
+        transaction.setImageUrl(null);
+        transaction.setImagePublicId(null);
     }
 }

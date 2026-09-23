@@ -26,6 +26,9 @@ public class PaymentTransactionMapper {
         dto.setStatus(transaction.getStatus());
         dto.setTransactionType(transaction.getTransactionType());
         dto.setReference(transaction.getReference());
+
+        dto.setImageUrl(transaction.getImageUrl());
+        dto.setImagePublicId(transaction.getImagePublicId());
         dto.setCreatedAt(transaction.getCreatedAt());
         dto.setPaymentId(transaction.getPayment() != null ? transaction.getPayment().getId() : null);
         dto.setBookingId(transaction.getBooking() != null ? transaction.getBooking().getId() : null);

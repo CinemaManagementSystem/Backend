@@ -13,4 +13,7 @@ public class TheaterResponseDto {
     private String status;
     private Long locationId;
     private Long managerId;
+    private String imageUrl;
+
+    private String imagePublicId;
 }

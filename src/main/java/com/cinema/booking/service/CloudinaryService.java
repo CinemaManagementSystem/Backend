@@ -2,6 +2,7 @@ package com.cinema.booking.service;
 
 import com.cloudinary.Cloudinary;
 import com.cloudinary.utils.ObjectUtils;
+import com.cinema.booking.exception.ExternalStorageException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,13 +18,6 @@ public class CloudinaryService {
 
     private final Cloudinary cloudinary;
 
-    /**
-     * Uploads an image file to Cloudinary.
-     *
-     * @param file the image file to upload
-     * @return a Map containing "secure_url" and "public_id"
-     * @throws RuntimeException if the upload fails
-     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> upload(MultipartFile file) {
         return upload(file, "Cinema_Project/product");
@@ -40,7 +34,10 @@ public class CloudinaryService {
             return result;
         } catch (IOException e) {
             log.error("Failed to upload image to Cloudinary", e);
-            throw new RuntimeException("Failed to upload image to Cloudinary: " + e.getMessage(), e);
+            throw new ExternalStorageException("Poster upload failed. Please try again.", e);
+        } catch (RuntimeException e) {
+            log.error("Cloudinary rejected the image upload request", e);
+            throw new ExternalStorageException(cloudinaryFailureMessage(e), e);
         }
     }
 
@@ -60,7 +57,10 @@ public class CloudinaryService {
             return result;
         } catch (IOException e) {
             log.error("Failed to import remote image to Cloudinary", e);
-            throw new RuntimeException("Failed to import image to Cloudinary: " + e.getMessage(), e);
+            throw new ExternalStorageException("Poster URL could not be imported. Please check the image URL and try again.", e);
+        } catch (RuntimeException e) {
+            log.error("Cloudinary rejected the remote image import request", e);
+            throw new ExternalStorageException(cloudinaryFailureMessage(e), e);
         }
     }
 
@@ -78,7 +78,18 @@ public class CloudinaryService {
             log.info("Image deleted from Cloudinary: publicId={}, result={}", publicId, result.get("result"));
         } catch (IOException e) {
             log.error("Failed to delete image from Cloudinary: publicId={}", publicId, e);
-            throw new RuntimeException("Failed to delete image from Cloudinary: " + e.getMessage(), e);
+            throw new ExternalStorageException("Stored image could not be removed from Cloudinary.", e);
+        } catch (RuntimeException e) {
+            log.error("Cloudinary rejected the image delete request: publicId={}", publicId, e);
+            throw new ExternalStorageException(cloudinaryFailureMessage(e), e);
         }
+    }
+
+    private String cloudinaryFailureMessage(RuntimeException exception) {
+        String message = exception.getMessage();
+        if (message != null && message.toLowerCase().contains("unknown api key")) {
+            return "Cloudinary credentials are invalid. Update CLOUDINARY_URL or CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET and restart the backend.";
+        }
+        return "Cloudinary could not process the image right now. Please try again.";
     }
 }

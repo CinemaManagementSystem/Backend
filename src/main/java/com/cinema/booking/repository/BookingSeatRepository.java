@@ -24,10 +24,10 @@ public interface BookingSeatRepository extends JpaRepository<BookingSeat, Long> 
     @Query("""
             select count(bs) > 0
             from BookingSeat bs
-            where bs.booking.show.id = :showId
+            where bs.showId = :showId
               and bs.seat.id = :seatId
               and (:excludedBookingSeatId is null or bs.id <> :excludedBookingSeatId)
-              and upper(bs.status) <> 'CANCELLED'
+              and upper(bs.status) not in ('CANCELLED', 'EXPIRED', 'RELEASED')
               and bs.booking.status not in (
                   com.cinema.booking.enums.BookingStatus.CANCELLED,
                   com.cinema.booking.enums.BookingStatus.EXPIRED
@@ -43,7 +43,7 @@ public interface BookingSeatRepository extends JpaRepository<BookingSeat, Long> 
             select count(bs) > 0
             from BookingSeat bs
             where bs.seat.id = :seatId
-              and upper(bs.status) <> 'CANCELLED'
+              and upper(bs.status) not in ('CANCELLED', 'EXPIRED', 'RELEASED')
               and bs.booking.status not in (
                   com.cinema.booking.enums.BookingStatus.CANCELLED,
                   com.cinema.booking.enums.BookingStatus.EXPIRED
@@ -55,7 +55,7 @@ public interface BookingSeatRepository extends JpaRepository<BookingSeat, Long> 
             select coalesce(sum(bs.price), 0)
             from BookingSeat bs
             where bs.booking.id = :bookingId
-              and upper(bs.status) <> 'CANCELLED'
+              and upper(bs.status) not in ('CANCELLED', 'EXPIRED', 'RELEASED')
             """)
     BigDecimal sumActivePricesByBookingId(@Param("bookingId") Long bookingId);
 }

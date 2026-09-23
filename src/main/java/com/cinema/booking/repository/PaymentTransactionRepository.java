@@ -2,6 +2,8 @@ package com.cinema.booking.repository;
 
 import com.cinema.booking.entity.PaymentTransaction;
 import com.cinema.booking.enums.PaymentStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.data.jpa.repository.Lock;
@@ -37,4 +39,10 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
     );
 
     List<PaymentTransaction> findByPaymentCustomerId(Long customerId);
+
+    Page<PaymentTransaction> findByPaymentCustomerId(Long customerId, Pageable pageable);
+
+    Page<PaymentTransaction> findByStatus(PaymentStatus status, Pageable pageable);
+
+    Page<PaymentTransaction> findByPaymentCustomerIdAndStatus(Long customerId, PaymentStatus status, Pageable pageable);
 }

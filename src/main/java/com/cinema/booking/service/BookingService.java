@@ -7,6 +7,7 @@ import java.util.List;
 public interface BookingService {
 
     BookingResponseDto create(BookingRequestDto dto);
+    BookingResponseDto create(BookingRequestDto dto, String idempotencyKey);
     BookingResponseDto update(Long id, BookingRequestDto dto);
     BookingResponseDto getById(Long id);
     List<BookingResponseDto> getAll();

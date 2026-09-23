@@ -270,8 +270,8 @@ class BakongServiceTest {
     }
 
     @Test
-    @DisplayName("Missing token configuration fails fast with IllegalStateException at startup")
-    void testMissingConfigurationFailsFastAtStartup() {
+    @DisplayName("Missing token configuration does not fail application startup")
+    void testMissingConfigurationDoesNotFailStartup() {
         KhqrConfig config = new KhqrConfig();
         config.setMockMode(false);
         config.setBaseUrl(BASE_URL);
@@ -280,8 +280,7 @@ class BakongServiceTest {
         config.setPassword(null);
 
         BakongServiceImpl service = new BakongServiceImpl(config);
-        IllegalStateException ex = assertThrows(IllegalStateException.class, service::validateConfiguration);
-        assertTrue(ex.getMessage().contains("Required Bakong credentials are missing"));
+        assertDoesNotThrow(service::validateConfiguration);
     }
 
     @Test

@@ -20,7 +20,7 @@ public class MovieController {
 
     private final MovieService movieService;
 
-    @PostMapping
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<MovieResponseDto> create(@Valid @RequestBody MovieRequestDto dto) {
         return new ResponseEntity<>(movieService.create(dto), HttpStatus.CREATED);
     }
@@ -32,7 +32,7 @@ public class MovieController {
         return new ResponseEntity<>(movieService.create(dto, poster), HttpStatus.CREATED);
     }
 
-    @PutMapping("/{id}")
+    @PutMapping(value = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<MovieResponseDto> update(@PathVariable Long id, @Valid @RequestBody MovieRequestDto dto) {
         return ResponseEntity.ok(movieService.update(id, dto));
     }

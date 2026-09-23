@@ -120,10 +120,12 @@ public class SecurityConfig {
                         "/api/locations/**",
                         "/api/theaters/**",
                         "/api/movie-category/**",
-                        "/api/memberships/plans"
+                        "/api/memberships/plans",
+                        "/api/banners/**"
                 ).permitAll();
 
                 // Admin-only management endpoints
+                auth.requestMatchers("/api/admin/banners/**").hasRole("ADMIN");
                 auth.requestMatchers("/api/admin/memberships/**").hasRole("ADMIN");
                 auth.requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "STAFF");
                 auth.requestMatchers("/api/users/**").hasRole("ADMIN");

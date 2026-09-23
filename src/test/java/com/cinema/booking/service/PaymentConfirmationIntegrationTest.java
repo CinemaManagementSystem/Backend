@@ -558,6 +558,7 @@ class PaymentConfirmationIntegrationTest {
             BookingSeat bookingSeat = new BookingSeat();
             bookingSeat.setBooking(booking);
             bookingSeat.setSeat(seat);
+            bookingSeat.setShowId(show.getId());
             bookingSeat.setPrice(seat.getPrice());
             bookingSeat.setStatus("PENDING");
             bookingSeats.add(bookingSeatRepository.save(bookingSeat));

@@ -37,6 +37,12 @@ public class PaymentTransaction {
     @Column(name = "reference", nullable = true)
     private String reference;
 
+    @Column(name = "image_url", length = 1000)
+    private String imageUrl;
+
+    @Column(name = "image_public_id", length = 500)
+    private String imagePublicId;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

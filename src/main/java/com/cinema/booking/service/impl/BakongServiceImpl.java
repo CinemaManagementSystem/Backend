@@ -117,16 +117,19 @@ public class BakongServiceImpl implements BakongService {
         boolean hasEmail       = hasText(khqrConfig.getEmail());
 
         if (!hasText(khqrConfig.getBaseUrl())) {
-            throw new IllegalStateException("Required Bakong configuration is missing: bakong.base-url");
+            log.warn("Bakong live verification is not configured: bakong.base-url is missing. "
+                    + "KHQR verification will return VERIFICATION_ERROR until configuration is fixed.");
+            return;
         }
         if (!hasEmail) {
-            throw new IllegalStateException("Required Bakong credentials are missing: bakong.email is required "
-                    + "for live token request/renewal");
+            log.warn("Bakong live verification is not fully configured: bakong.email is missing. "
+                    + "KHQR verification will return VERIFICATION_ERROR until configuration is fixed.");
         }
         if (!hasStaticToken) {
             if (!hasText(khqrConfig.getOrganization()) || !hasText(khqrConfig.getProject())) {
-                throw new IllegalStateException("Required Bakong credentials are missing: bakong.organization and "
-                        + "bakong.project are required for initial token registration when bakong.token is empty");
+                log.warn("Bakong live verification is not fully configured: bakong.token is empty and "
+                        + "bakong.organization/bakong.project are missing. KHQR verification will return "
+                        + "VERIFICATION_ERROR until configuration is fixed.");
             }
             log.info("Bakong static bootstrap token is not configured; first live verification will request a token "
                     + "from POST /v1/request_token and may require POST /v1/verify");

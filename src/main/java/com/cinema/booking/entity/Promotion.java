@@ -72,13 +72,36 @@ public class Promotion {
     @Column(name = "used_count", nullable = false)
     private Integer usedCount = 0;
 
+    @Column(name = "active", nullable = false)
+    private Boolean active = true;
+
+    @Column(name = "combinable_with_membership", nullable = false)
+    private Boolean combinableWithMembership = true;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private PromotionStatus status = PromotionStatus.DRAFT;
+    private PromotionStatus status = PromotionStatus.ACTIVE;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "scope", nullable = false)
     private PromotionScope scope = PromotionScope.ALL;
+
+    public PromotionStatus getEffectiveStatus() {
+        if (Boolean.FALSE.equals(this.active) || this.status == PromotionStatus.DISABLED || this.status == PromotionStatus.PAUSED) {
+            return PromotionStatus.DISABLED;
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
+        if (startDate != null && now.isBefore(startDate)) {
+            return PromotionStatus.SCHEDULED;
+        }
+        if (endDate != null && now.isAfter(endDate)) {
+            return PromotionStatus.EXPIRED;
+        }
+        if (usageLimitTotal != null && usedCount != null && usedCount >= usageLimitTotal) {
+            return PromotionStatus.EXHAUSTED;
+        }
+        return PromotionStatus.ACTIVE;
+    }
 
     @Column(name = "target_movie_id")
     private Long targetMovieId;

@@ -14,6 +14,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.cinema.booking.entity.Banner;
 import com.cinema.booking.entity.Location;
 import com.cinema.booking.entity.Movie;
 import com.cinema.booking.entity.MovieCategory;
@@ -24,7 +25,9 @@ import com.cinema.booking.entity.Seat;
 import com.cinema.booking.entity.Show;
 import com.cinema.booking.entity.Theater;
 import com.cinema.booking.entity.User;
+import com.cinema.booking.enums.BannerSection;
 import com.cinema.booking.enums.Role;
+import com.cinema.booking.repository.BannerRepository;
 import com.cinema.booking.repository.LocationRepository;
 import com.cinema.booking.repository.MovieCategoryRepository;
 import com.cinema.booking.repository.MovieRepository;
@@ -56,6 +59,7 @@ public class DatabaseSeeder implements CommandLineRunner {
     private final MovieRepository movieRepository;
     private final ProductCategoryRepository productCategoryRepository;
     private final ProductRepository productRepository;
+    private final BannerRepository bannerRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -65,161 +69,283 @@ public class DatabaseSeeder implements CommandLineRunner {
             log.info("Starting master database seeding...");
 
             // 1. Users
-        User admin = seedUserIfNotExists("admin", "admin@cinema.com", "Admin User", "Admin123", Role.ADMIN);
-        User staff = seedUserIfNotExists("staff", "staff@cinema.com", "Staff Member", "Staff123", Role.STAFF);
-        User customer = seedUserIfNotExists("user", "user@cinema.com", "Regular Customer", "User123", Role.USER);
+            User admin = seedUserIfNotExists("admin", "admin@cinema.com", "Admin User", "Admin123", Role.ADMIN);
+            User staff = seedUserIfNotExists("staff", "staff@cinema.com", "Staff Member", "Staff123", Role.STAFF);
+            User customer = seedUserIfNotExists("user", "user@cinema.com", "Regular Customer", "User123", Role.USER);
 
-        // 2. Locations
-        Location phnomPenh = seedLocationIfNotExists(
-                "Phnom Penh Central",
-                "#123 St 214, Daun Penh, Phnom Penh",
-                "Phnom Penh",
-                "https://maps.google.com/?q=11.5564,104.9282",
-                BigDecimal.valueOf(11.5564),
-                BigDecimal.valueOf(104.9282)
-        );
+            // 2. Locations
+            Location phnomPenh = seedLocationIfNotExists(
+                    "Phnom Penh Central",
+                    "#123 St 214, Daun Penh, Phnom Penh",
+                    "Phnom Penh",
+                    "https://maps.google.com/?q=11.5564,104.9282",
+                    BigDecimal.valueOf(11.5564),
+                    BigDecimal.valueOf(104.9282)
+            );
 
-        Location senSok = seedLocationIfNotExists(
-                "Aeon Sen Sok City",
-                "St 1003, Bayab Village, Phnom Penh",
-                "Phnom Penh",
-                "https://maps.google.com/?q=11.6025,104.8827",
-                BigDecimal.valueOf(11.6025),
-                BigDecimal.valueOf(104.8827)
-        );
+            Location senSok = seedLocationIfNotExists(
+                    "Aeon Sen Sok City",
+                    "St 1003, Bayab Village, Phnom Penh",
+                    "Phnom Penh",
+                    "https://maps.google.com/?q=11.6025,104.8827",
+                    BigDecimal.valueOf(11.6025),
+                    BigDecimal.valueOf(104.8827)
+            );
 
-        Location siemReap = seedLocationIfNotExists(
-                "Siem Reap Riverside",
-                "Pokambor Ave, Krong Siem Reap",
-                "Siem Reap",
-                "https://maps.google.com/?q=13.3633,103.8564",
-                BigDecimal.valueOf(13.3633),
-                BigDecimal.valueOf(103.8564)
-        );
+            Location siemReap = seedLocationIfNotExists(
+                    "Siem Reap Riverside",
+                    "Pokambor Ave, Krong Siem Reap",
+                    "Siem Reap",
+                    "https://maps.google.com/?q=13.3633,103.8564",
+                    BigDecimal.valueOf(13.3633),
+                    BigDecimal.valueOf(103.8564)
+            );
 
-        // 4. Theaters (linked to Location & Manager User)
-        Theater legendCinema = seedTheaterIfNotExists(
-                "Legend Cinema Central",
-                "Level 3, Central Mall, Daun Penh",
-                "023-888-999",
-                "OPEN",
-                phnomPenh,
-                staff
-        );
+            // 4. Theaters (linked to Location & Manager User)
+            Theater legendCinema = seedTheaterIfNotExists(
+                    "Legend Cinema Central",
+                    "Level 3, Central Mall, Daun Penh",
+                    "023-888-999",
+                    "OPEN",
+                    "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=800&q=80",
+                    phnomPenh,
+                    staff
+            );
 
-        Theater majorCineplex = seedTheaterIfNotExists(
-                "Major Cineplex Sen Sok",
-                "2nd Floor, Aeon Mall Sen Sok City",
-                "023-777-666",
-                "OPEN",
-                senSok,
-                staff
-        );
+            Theater majorCineplex = seedTheaterIfNotExists(
+                    "Major Cineplex Sen Sok",
+                    "2nd Floor, Aeon Mall Sen Sok City",
+                    "023-777-666",
+                    "OPEN",
+                    "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=800&q=80",
+                    senSok,
+                    staff
+            );
 
-        Theater primeSiemReap = seedTheaterIfNotExists(
-                "Prime Cineplex Siem Reap",
-                "Riverside Walkway, Siem Reap",
-                "063-555-444",
-                "OPEN",
-                siemReap,
-                staff
-        );
+            Theater primeSiemReap = seedTheaterIfNotExists(
+                    "Prime Cineplex Siem Reap",
+                    "Riverside Walkway, Siem Reap",
+                    "063-555-444",
+                    "OPEN",
+                    "https://images.unsplash.com/photo-1595769816263-9b910be24d5f?auto=format&fit=crop&w=800&q=80",
+                    siemReap,
+                    staff
+            );
 
-        // 5. Screens (linked to Theater)
-        Screen screen1 = seedScreenIfNotExists("Hall 1 - IMAX", "IMAX", "ACTIVE", 40, legendCinema);
-        Screen screen2 = seedScreenIfNotExists("Hall 2 - VIP", "VIP", "ACTIVE", 30, legendCinema);
-        Screen screen3 = seedScreenIfNotExists("Hall 1 - Premium", "STANDARD", "ACTIVE", 40, majorCineplex);
-        Screen screen4 = seedScreenIfNotExists("Hall 1 - Deluxe", "STANDARD", "ACTIVE", 30, primeSiemReap);
+            // 5. Screens (linked to Theater)
+            Screen screen1 = seedScreenIfNotExists("Hall 1 - IMAX", "IMAX", "ACTIVE", 40, legendCinema);
+            Screen screen2 = seedScreenIfNotExists("Hall 2 - VIP", "VIP", "ACTIVE", 30, legendCinema);
+            Screen screen3 = seedScreenIfNotExists("Hall 1 - Premium", "STANDARD", "ACTIVE", 40, majorCineplex);
+            Screen screen4 = seedScreenIfNotExists("Hall 1 - Deluxe", "STANDARD", "ACTIVE", 30, primeSiemReap);
 
-        // 6. Seats (linked to Screen)
-        seedSeatsForScreen(screen1, 4, 10);
-        seedSeatsForScreen(screen2, 3, 10);
-        seedSeatsForScreen(screen3, 4, 10);
-        seedSeatsForScreen(screen4, 3, 10);
+            // 6. Seats (linked to Screen)
+            seedSeatsForScreen(screen1, 4, 10);
+            seedSeatsForScreen(screen2, 3, 10);
+            seedSeatsForScreen(screen3, 4, 10);
+            seedSeatsForScreen(screen4, 3, 10);
 
-        // 7. Movie Categories
-        MovieCategory sciFi = seedMovieCategoryIfNotExists("Sci-Fi & Fantasy", "Mind-bending futuristic and fantasy cinema", true);
-        MovieCategory action = seedMovieCategoryIfNotExists("Action & Adventure", "High octane and thrilling blockbuster movies", true);
-        MovieCategory animation = seedMovieCategoryIfNotExists("Animation", "Family friendly animated adventures", true);
-        MovieCategory horror = seedMovieCategoryIfNotExists("Horror & Thriller", "Suspenseful and terrifying experiences", true);
-        MovieCategory drama = seedMovieCategoryIfNotExists("Drama & Romance", "Compelling stories of life, relationships, and drama", true);
+            // 7. Movie Categories
+            MovieCategory sciFi = seedMovieCategoryIfNotExists("Sci-Fi & Fantasy", "Mind-bending futuristic and fantasy cinema", true);
+            MovieCategory action = seedMovieCategoryIfNotExists("Action & Adventure", "High octane and thrilling blockbuster movies", true);
+            MovieCategory animation = seedMovieCategoryIfNotExists("Animation", "Family friendly animated adventures", true);
+            MovieCategory horror = seedMovieCategoryIfNotExists("Horror & Thriller", "Suspenseful and terrifying experiences", true);
+            MovieCategory drama = seedMovieCategoryIfNotExists("Drama & Romance", "Compelling stories of life, relationships, and drama", true);
 
-        // 8. Movies (linked to MovieCategory)
-        seedMovieIfNotExists(
-                "Inception",
-                "A thief who steals corporate secrets through dream-sharing technology is given the inverse task of planting an idea.",
-                148,
-                "Sci-Fi, Thriller",
-                "English",
-                "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=600&q=80",
-                LocalDate.of(2010, 7, 16),
-                "NOW_SHOWING",
-                sciFi
-        );
+            // 8. Movies (linked to MovieCategory)
+            seedMovieIfNotExists(
+                    "Inception",
+                    "A thief who steals corporate secrets through dream-sharing technology is given the inverse task of planting an idea.",
+                    148,
+                    "Sci-Fi, Thriller",
+                    "English",
+                    "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=600&q=80",
+                    LocalDate.of(2010, 7, 16),
+                    "NOW_SHOWING",
+                    sciFi
+            );
 
-        seedMovieIfNotExists(
-                "Interstellar",
-                "A team of explorers travel through a wormhole in space in an attempt to ensure humanity's survival.",
-                169,
-                "Sci-Fi, Drama",
-                "English",
-                "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=600&q=80",
-                LocalDate.of(2014, 11, 7),
-                "NOW_SHOWING",
-                sciFi
-        );
+            seedMovieIfNotExists(
+                    "Interstellar",
+                    "A team of explorers travel through a wormhole in space in an attempt to ensure humanity's survival.",
+                    169,
+                    "Sci-Fi, Drama",
+                    "English",
+                    "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=600&q=80",
+                    LocalDate.of(2014, 11, 7),
+                    "NOW_SHOWING",
+                    sciFi
+            );
 
-        seedMovieIfNotExists(
-                "Avengers: Endgame",
-                "After devastating events, the Avengers assemble once more in order to reverse Thanos' actions.",
-                181,
-                "Action, Sci-Fi",
-                "English",
-                "https://images.unsplash.com/photo-1574267432553-4b4628081c31?auto=format&fit=crop&w=600&q=80",
-                LocalDate.of(2019, 4, 26),
-                "NOW_SHOWING",
-                action
-        );
+            seedMovieIfNotExists(
+                    "Avengers: Endgame",
+                    "After devastating events, the Avengers assemble once more in order to reverse Thanos' actions.",
+                    181,
+                    "Action, Sci-Fi",
+                    "English",
+                    "https://images.unsplash.com/photo-1574267432553-4b4628081c31?auto=format&fit=crop&w=600&q=80",
+                    LocalDate.of(2019, 4, 26),
+                    "NOW_SHOWING",
+                    action
+            );
 
-        seedMovieIfNotExists(
-                "Neon Nights",
-                "A cybersecurity hacker gets trapped in a virtual neon underworld and must hack his way out through digital defense systems.",
-                124,
-                "Sci-Fi, Thriller",
-                "English",
-                "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80",
-                LocalDate.of(2026, 9, 1),
-                "COMING_SOON",
-                sciFi
-        );
+            seedMovieIfNotExists(
+                    "Neon Nights",
+                    "A cybersecurity hacker gets trapped in a virtual neon underworld and must hack his way out through digital defense systems.",
+                    124,
+                    "Sci-Fi, Thriller",
+                    "English",
+                    "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80",
+                    LocalDate.of(2026, 9, 1),
+                    "COMING_SOON",
+                    sciFi
+            );
 
-        // 9. Showtimes (linked to Movie & Screen)
-        LocalDate showDate = LocalDate.now().plusDays(1);
-        seedShowIfNotExists("Inception", screen1, showDate.atTime(LocalTime.of(18, 0)), BigDecimal.valueOf(6.00));
-        seedShowIfNotExists("Interstellar", screen2, showDate.atTime(LocalTime.of(19, 0)), BigDecimal.valueOf(9.00));
-        seedShowIfNotExists("Avengers: Endgame", screen3, showDate.atTime(LocalTime.of(20, 0)), BigDecimal.valueOf(6.00));
+            // 9. Showtimes (linked to Movie & Screen)
+            LocalDate showDate = LocalDate.now().plusDays(1);
+            seedShowIfNotExists("Inception", screen1, showDate.atTime(LocalTime.of(18, 0)), BigDecimal.valueOf(6.00));
+            seedShowIfNotExists("Interstellar", screen2, showDate.atTime(LocalTime.of(19, 0)), BigDecimal.valueOf(9.00));
+            seedShowIfNotExists("Avengers: Endgame", screen3, showDate.atTime(LocalTime.of(20, 0)), BigDecimal.valueOf(6.00));
 
-        // 10. Product Categories
-        ProductCategory popcornCat = seedProductCategoryIfNotExists("Popcorn", "Freshly popped gourmet popcorn in sweet, salted, or cheese flavors", true);
-        ProductCategory beveragesCat = seedProductCategoryIfNotExists("Beverages", "Refreshing soft drinks, mineral water, and juices", true);
-        ProductCategory snacksCat = seedProductCategoryIfNotExists("Snacks", "Delicious movie snacks including nachos, hot dogs, and candy", true);
-        ProductCategory combosCat = seedProductCategoryIfNotExists("Combos", "Value combos combining popcorn and beverages for the best experience", true);
+            // 10. Product Categories
+            ProductCategory popcornCat = seedProductCategoryIfNotExists("Popcorn", "Freshly popped gourmet popcorn in sweet, salted, or cheese flavors", true);
+            ProductCategory beveragesCat = seedProductCategoryIfNotExists("Beverages", "Refreshing soft drinks, mineral water, and juices", true);
+            ProductCategory snacksCat = seedProductCategoryIfNotExists("Snacks", "Delicious movie snacks including nachos, hot dogs, and candy", true);
+            ProductCategory combosCat = seedProductCategoryIfNotExists("Combos", "Value combos combining popcorn and beverages for the best experience", true);
 
-        // 11. Products (linked to ProductCategory)
-        seedProductIfNotExists("Caramel Popcorn (L)", BigDecimal.valueOf(4.50), "https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=400&q=80", true, 100, popcornCat);
-        seedProductIfNotExists("Salted Popcorn (M)", BigDecimal.valueOf(3.50), "https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=400&q=80", true, 100, popcornCat);
-        seedProductIfNotExists("Coca-Cola 500ml", BigDecimal.valueOf(2.00), "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=400&q=80", true, 200, beveragesCat);
-        seedProductIfNotExists("Mineral Water 500ml", BigDecimal.valueOf(1.00), "https://images.unsplash.com/photo-1560023907-5f339617ea30?auto=format&fit=crop&w=400&q=80", true, 250, beveragesCat);
-        seedProductIfNotExists("Crispy Nachos & Cheese", BigDecimal.valueOf(4.00), "https://images.unsplash.com/photo-1513456852971-30c0b8199d4d?auto=format&fit=crop&w=400&q=80", true, 80, snacksCat);
-        seedProductIfNotExists("Classic Hot Dog", BigDecimal.valueOf(3.50), "https://images.unsplash.com/photo-1619740455993-9e612b1af08a?auto=format&fit=crop&w=400&q=80", true, 60, snacksCat);
-        seedProductIfNotExists("Movie Night Combo (Popcorn + 2 Drinks)", BigDecimal.valueOf(7.50), "https://images.unsplash.com/photo-1572177191856-3cde618dee1f?auto=format&fit=crop&w=400&q=80", true, 50, combosCat);
+            // 11. Products (linked to ProductCategory)
+            seedProductIfNotExists("Caramel Popcorn (L)", BigDecimal.valueOf(4.50), "https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=400&q=80", true, 100, popcornCat);
+            seedProductIfNotExists("Salted Popcorn (M)", BigDecimal.valueOf(3.50), "https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=400&q=80", true, 100, popcornCat);
+            seedProductIfNotExists("Coca-Cola 500ml", BigDecimal.valueOf(2.00), "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=400&q=80", true, 200, beveragesCat);
+            seedProductIfNotExists("Mineral Water 500ml", BigDecimal.valueOf(1.00), "https://images.unsplash.com/photo-1560023907-5f339617ea30?auto=format&fit=crop&w=400&q=80", true, 250, beveragesCat);
+            seedProductIfNotExists("Crispy Nachos & Cheese", BigDecimal.valueOf(4.00), "https://images.unsplash.com/photo-1513456852971-30c0b8199d4d?auto=format&fit=crop&w=400&q=80", true, 80, snacksCat);
+            seedProductIfNotExists("Classic Hot Dog", BigDecimal.valueOf(3.50), "https://images.unsplash.com/photo-1619740455993-9e612b1af08a?auto=format&fit=crop&w=400&q=80", true, 60, snacksCat);
+            seedProductIfNotExists("Movie Night Combo (Popcorn + 2 Drinks)", BigDecimal.valueOf(7.50), "https://images.unsplash.com/photo-1572177191856-3cde618dee1f?auto=format&fit=crop&w=400&q=80", true, 50, combosCat);
 
-        log.info("Master database seeding completed successfully.");
+            // 12. Dynamic Page Banners
+            seedDefaultBanners();
+
+            log.info("Master database seeding completed successfully.");
         } catch (Throwable t) {
             System.err.println("Database Seeder failed with exception: " + t.getMessage());
             t.printStackTrace();
             throw t;
         }
+    }
+
+    private void seedDefaultBanners() {
+        if (bannerRepository.count() > 0) {
+            return;
+        }
+
+        List<Banner> banners = List.of(
+                // HOME Section
+                Banner.builder()
+                        .section(BannerSection.HOME)
+                        .title("Blockbuster Season 2026")
+                        .subtitle("Experience cinema like never before in IMAX 3D and 4DX")
+                        .imageUrl("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/cinemas")
+                        .sortOrder(0)
+                        .isActive(true)
+                        .build(),
+                Banner.builder()
+                        .section(BannerSection.HOME)
+                        .title("Legendary Popcorn & Combos")
+                        .subtitle("Pair your favorite movies with our freshly popped gourmet snacks")
+                        .imageUrl("https://images.unsplash.com/photo-1572177191856-3cde618dee1f?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/fnb")
+                        .sortOrder(1)
+                        .isActive(true)
+                        .build(),
+                Banner.builder()
+                        .section(BannerSection.HOME)
+                        .title("Exclusive VIP Membership")
+                        .subtitle("Get up to 20% off tickets and complimentary lounge access")
+                        .imageUrl("https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/membership")
+                        .sortOrder(2)
+                        .isActive(true)
+                        .build(),
+
+                // CINEMA Section
+                Banner.builder()
+                        .section(BannerSection.CINEMA)
+                        .title("World-Class Theaters & Luxury Screens")
+                        .subtitle("Immerse yourself with Dolby Atmos sound and ultra-reclining leather loungers")
+                        .imageUrl("https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=1600&q=80")
+                        .sortOrder(0)
+                        .isActive(true)
+                        .build(),
+                Banner.builder()
+                        .section(BannerSection.CINEMA)
+                        .title("State-of-the-Art IMAX Experience")
+                        .subtitle("Crystal-clear images and heart-pounding audio across Phnom Penh & Siem Reap")
+                        .imageUrl("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1600&q=80")
+                        .sortOrder(1)
+                        .isActive(true)
+                        .build(),
+
+                // OFFER Section
+                Banner.builder()
+                        .section(BannerSection.OFFER)
+                        .title("Weekly Specials & Student Discounts")
+                        .subtitle("Save up to 40% on tickets every Wednesday and student matinee shows")
+                        .imageUrl("https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/promotion")
+                        .sortOrder(0)
+                        .isActive(true)
+                        .build(),
+                Banner.builder()
+                        .section(BannerSection.OFFER)
+                        .title("Family Weekend Pass")
+                        .subtitle("Bring the whole family and get free regular popcorn combos")
+                        .imageUrl("https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/promotion")
+                        .sortOrder(1)
+                        .isActive(true)
+                        .build(),
+
+                // FNB Section
+                Banner.builder()
+                        .section(BannerSection.FNB)
+                        .title("Gourmet Concessions & Movie Combos")
+                        .subtitle("Fresh warm caramel popcorn, ice-cold drinks, and loaded cheesy nachos")
+                        .imageUrl("https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=1600&q=80")
+                        .sortOrder(0)
+                        .isActive(true)
+                        .build(),
+                Banner.builder()
+                        .section(BannerSection.FNB)
+                        .title("Combo Craze: Buy 1 Get 1 Snack")
+                        .subtitle("Available exclusively when ordering online with your ticket")
+                        .imageUrl("https://images.unsplash.com/photo-1572177191856-3cde618dee1f?auto=format&fit=crop&w=1600&q=80")
+                        .sortOrder(1)
+                        .isActive(true)
+                        .build(),
+
+                // MEMBERSHIP Section
+                Banner.builder()
+                        .section(BannerSection.MEMBERSHIP)
+                        .title("Unlock Elite Cinema Privileges")
+                        .subtitle("Earn loyalty reward points on every booking, skip concession queues, and get free tickets")
+                        .imageUrl("https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/membership")
+                        .sortOrder(0)
+                        .isActive(true)
+                        .build(),
+                Banner.builder()
+                        .section(BannerSection.MEMBERSHIP)
+                        .title("VIP Platinum Club Perks")
+                        .subtitle("Private lounge access, complimentary birthday tickets, and premium seating upgrades")
+                        .imageUrl("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1600&q=80")
+                        .linkUrl("/membership")
+                        .sortOrder(1)
+                        .isActive(true)
+                        .build()
+        );
+
+        bannerRepository.saveAll(banners);
+        log.info("Seeded {} default banners across 5 sections.", banners.size());
     }
 
     private User seedUserIfNotExists(String username, String email, String name, String rawPassword, Role role) {
@@ -263,13 +389,20 @@ public class DatabaseSeeder implements CommandLineRunner {
         });
     }
 
-    private Theater seedTheaterIfNotExists(String name, String address, String phone, String status, Location location, User manager) {
-        return theaterRepository.findByName(name).orElseGet(() -> {
+    private Theater seedTheaterIfNotExists(String name, String address, String phone, String status, String imageUrl, Location location, User manager) {
+        return theaterRepository.findByName(name).map(existing -> {
+            if (existing.getImageUrl() == null && imageUrl != null) {
+                existing.setImageUrl(imageUrl);
+                return theaterRepository.save(existing);
+            }
+            return existing;
+        }).orElseGet(() -> {
             Theater theater = new Theater();
             theater.setName(name);
             theater.setAddress(address);
             theater.setPhone(phone);
             theater.setStatus(status);
+            theater.setImageUrl(imageUrl);
             theater.setLocation(location);
             theater.setManager(manager);
             Theater saved = theaterRepository.save(theater);
@@ -402,5 +535,3 @@ public class DatabaseSeeder implements CommandLineRunner {
         }
     }
 }
-
-

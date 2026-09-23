@@ -53,6 +53,9 @@ services:
       start_period: 90s
     env_file:
       - .env
+      # Development-only values (for example Cloudinary) override matching
+      # entries from .env. Service-specific values below still take priority.
+      - .env.development
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/cinema_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
       SPRING_DATASOURCE_USERNAME: cinema_user
@@ -61,17 +64,20 @@ services:
       JAVA_TOOL_OPTIONS: -Duser.timezone=Asia/Phnom_Penh
       APP_SEED_ENABLED: "true"
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000
+      # Keep local Docker runs from consuming the Bakong production quota unless
+      # the Compose-level .env explicitly opts into live verification.
+      BAKONG_MOCK_MODE: ${BAKONG_MOCK_MODE:-true}
       SERVER_PORT: 8081
       # Disable DevTools auto-restart: any save in the bind-mounted source
       # used to restart the app (~2 min cold start) and drop in-flight API
       # requests with 500s. Restart explicitly with `docker compose restart`.
       SPRING_DEVTOOLS_RESTART_ENABLED: "false"
       SPRING_DEVTOOLS_LIVERELOAD_ENABLED: "false"
-      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
-      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
-      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
     volumes:
       - .:/app
+      # Keep generated classes inside Docker. Host-side Maven/IDE builds must not
+      # race with the container or leave partial class files in /app/target.
+      - /app/target
       - maven_data:/root/.m2
     ports:
       - "8081:8081"

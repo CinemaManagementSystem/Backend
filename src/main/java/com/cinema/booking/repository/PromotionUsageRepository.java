@@ -17,6 +17,12 @@ public interface PromotionUsageRepository extends JpaRepository<PromotionUsage, 
 
     Optional<PromotionUsage> findByOrderId(Long orderId);
 
+    Optional<PromotionUsage> findByBookingId(Long bookingId);
+
+    boolean existsByPromotionIdAndBookingId(Long promotionId, Long bookingId);
+
+    Optional<PromotionUsage> findByPromotionIdAndBookingId(Long promotionId, Long bookingId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select pu from PromotionUsage pu where pu.order.id = :orderId")
     Optional<PromotionUsage> findByOrderIdForUpdate(@Param("orderId") Long orderId);
@@ -26,6 +32,10 @@ public interface PromotionUsageRepository extends JpaRepository<PromotionUsage, 
             Long userId,
             List<PromotionUsageStatus> statuses
     );
+
+    long countByPromotionIdAndUserId(Long promotionId, Long userId);
+
+    long countByPromotionId(Long promotionId);
 
     List<PromotionUsage> findByPromotionIdOrderByCreatedAtDesc(Long promotionId);
 

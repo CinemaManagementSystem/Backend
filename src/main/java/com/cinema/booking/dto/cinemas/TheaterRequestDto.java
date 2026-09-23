@@ -20,4 +20,6 @@ public class TheaterRequestDto {
     private Long locationId;
     @NotNull
     private Long managerId;
+
+    private String imageUrl;
 }

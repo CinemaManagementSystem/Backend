@@ -14,6 +14,9 @@ public class PaymentTransactionResponseDto {
     private PaymentStatus status;
     private PaymentMethod transactionType;
     private String reference;
+
+    private String imageUrl;
+    private String imagePublicId;
     private LocalDateTime createdAt;
     private Long paymentId;
     private Long bookingId;

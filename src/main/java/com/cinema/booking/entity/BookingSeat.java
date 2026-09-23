@@ -37,6 +37,13 @@ public class BookingSeat {
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
 
+    /**
+     * Denormalized from booking.show. PostgreSQL uses this value in the
+     * partial unique index that makes an active seat hold unique per show.
+     */
+    @Column(name = "show_id")
+    private Long showId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "booking_id", nullable = false)
     private Booking booking;

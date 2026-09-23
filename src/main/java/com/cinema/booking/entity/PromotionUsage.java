@@ -24,7 +24,7 @@ import java.time.ZoneId;
 
 @Entity
 @Table(name = "promotion_usage", uniqueConstraints = {
-        @UniqueConstraint(name = "uk_promotion_usage_order", columnNames = "order_id")
+        @UniqueConstraint(name = "uk_promotion_usage_booking_promo", columnNames = {"promotion_id", "booking_id"})
 })
 @Data
 @NoArgsConstructor
@@ -44,7 +44,11 @@ public class PromotionUsage {
     private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_id", nullable = false)
+    @JoinColumn(name = "booking_id", nullable = true)
+    private Booking booking;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_id", nullable = true)
     private Order order;
 
     @Column(name = "discount_applied", nullable = false, precision = 12, scale = 2)
@@ -52,13 +56,20 @@ public class PromotionUsage {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private PromotionUsageStatus status = PromotionUsageStatus.RESERVED;
+    private PromotionUsageStatus status = PromotionUsageStatus.CONFIRMED;
+
+    @Column(name = "used_at")
+    private LocalDateTime usedAt;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
-        createdAt = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Phnom_Penh"));
+        createdAt = now;
+        if (usedAt == null) {
+            usedAt = now;
+        }
     }
 }

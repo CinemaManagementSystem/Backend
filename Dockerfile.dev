@@ -13,5 +13,10 @@ RUN mvn dependency:go-offline -B || true
 # Expose server port and remote debug port
 EXPOSE 8081 5005
 
-# Run with Spring Boot live-reload enabled
-ENTRYPOINT ["mvn", "spring-boot:run"]
+# Always rebuild from a clean target directory. The project source is bind-mounted
+# in development, so stale or partially-written class files can otherwise survive
+# container restarts and crash Spring Boot's classpath scanner.
+#
+# Launch the repackaged jar directly instead of keeping Maven as the application
+# process. This gives Docker the real Java process for signals and health checks.
+ENTRYPOINT ["sh", "-c", "find /app/target -mindepth 1 -delete && mvn -B -DskipTests package && exec java -jar target/cinema_project-0.0.1-SNAPSHOT.jar"]

@@ -18,8 +18,11 @@ public class BookingController {
     private final BookingService bookingService;
 
     @PostMapping
-    public ResponseEntity<BookingResponseDto> create(@Valid @RequestBody BookingRequestDto dto) {
-        return new ResponseEntity<>(bookingService.create(dto), HttpStatus.CREATED);
+    public ResponseEntity<BookingResponseDto> create(
+            @Valid @RequestBody BookingRequestDto dto,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
+    ) {
+        return new ResponseEntity<>(bookingService.create(dto, idempotencyKey), HttpStatus.CREATED);
     }
 
     @PutMapping("/{id}")

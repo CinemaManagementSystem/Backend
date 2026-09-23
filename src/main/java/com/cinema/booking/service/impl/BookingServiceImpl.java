@@ -12,12 +12,14 @@ import com.cinema.booking.dto.bookings.BookingResponseDto;
 import com.cinema.booking.enums.BookingStatus;
 import com.cinema.booking.enums.PaymentStatus;
 import com.cinema.booking.exception.ResourceNotFoundException;
+import com.cinema.booking.exception.IdempotencyKeyConflictException;
 import com.cinema.booking.mapper.BookingMapper;
 import com.cinema.booking.repository.BookingRepository;
 import com.cinema.booking.repository.ShowRepository;
 import com.cinema.booking.repository.BookingSeatRepository;
 import com.cinema.booking.repository.PaymentRepository;
 import com.cinema.booking.repository.PaymentTransactionRepository;
+import com.cinema.booking.repository.UserRepository;
 import com.cinema.booking.security.AuthorizationService;
 import com.cinema.booking.service.BookingService;
 import lombok.RequiredArgsConstructor;
@@ -42,12 +44,37 @@ public class BookingServiceImpl implements BookingService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final AuthorizationService authorizationService;
     private final BookingHoldConfig bookingHoldConfig;
+    private final UserRepository userRepository;
 
     @Override
     @Transactional
     public BookingResponseDto create(BookingRequestDto dto) {
+        return create(dto, null);
+    }
+
+    @Override
+    @Transactional
+    public BookingResponseDto create(BookingRequestDto dto, String idempotencyKey) {
+        String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+        User requestedCustomer = authorizationService.resolveCustomerForAuthenticatedRequest(dto.getCustomerId());
+        // Serialize retries for one customer. The PostgreSQL unique index is
+        // still the final authority if another code path bypasses this lock.
+        User customer = normalizedKey == null
+                ? requestedCustomer
+                : userRepository.findByIdForUpdate(requestedCustomer.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", requestedCustomer.getId()));
+        if (normalizedKey != null) {
+            Booking existing = bookingRepository.findByCustomerIdAndIdempotencyKey(customer.getId(), normalizedKey)
+                    .orElse(null);
+            if (existing != null) {
+                if (existing.getShow() == null || !existing.getShow().getId().equals(dto.getShowId())) {
+                    throw new IdempotencyKeyConflictException();
+                }
+                return bookingMapper.toResponseDto(existing);
+            }
+        }
+
         Booking booking = bookingMapper.toEntity(dto);
-        User customer = authorizationService.resolveCustomerForAuthenticatedRequest(dto.getCustomerId());
         booking.setCustomer(customer);
         Show show = showRepository.findById(dto.getShowId())
                 .orElseThrow(() -> new ResourceNotFoundException("Show", dto.getShowId()));
@@ -57,10 +84,22 @@ public class BookingServiceImpl implements BookingService {
         booking.setBookedAt(bookedAt);
         booking.setExpiresAt(resolveExpiryAt(show));
         booking.setBookingCode("BOOK-" + UUID.randomUUID());
+        booking.setIdempotencyKey(normalizedKey);
         booking.setStatus(BookingStatus.PENDING);
         booking.setTotalAmount(BigDecimal.ZERO);
         booking = bookingRepository.save(booking);
         return bookingMapper.toResponseDto(booking);
+    }
+
+    private String normalizeIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return null;
+        }
+        String normalized = idempotencyKey.trim();
+        if (normalized.length() > 128) {
+            throw new IllegalArgumentException("Idempotency-Key must be 128 characters or fewer");
+        }
+        return normalized;
     }
 
     @Override

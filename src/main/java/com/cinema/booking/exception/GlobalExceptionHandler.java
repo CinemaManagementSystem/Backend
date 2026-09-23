@@ -17,9 +17,11 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -122,17 +124,64 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
     }
 
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex, HttpServletRequest request) {
-        log.error("Data integrity violation on path [{}]: {}", request.getRequestURI(), ex.getMessage(), ex);
+    @ExceptionHandler(SeatUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleSeatUnavailable(SeatUnavailableException ex, HttpServletRequest request) {
+        log.info("Seat unavailable on path [{}]: showId={}, seatId={}",
+                request.getRequestURI(), ex.getShowId(), ex.getSeatId());
         ErrorResponse errorResponse = ErrorResponse.builder()
                 .timestamp(LocalDateTime.now())
                 .status(HttpStatus.CONFLICT.value())
                 .error(HttpStatus.CONFLICT.getReasonPhrase())
-                .message("Data conflict or unique constraint violation occurred: " + (ex.getRootCause() != null ? ex.getRootCause().getMessage() : ex.getMessage()))
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .errors(Map.of(
+                        "showId", String.valueOf(ex.getShowId()),
+                        "seatId", String.valueOf(ex.getSeatId())
+                ))
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    public ResponseEntity<ErrorResponse> handleIdempotencyKeyConflict(
+            IdempotencyKeyConflictException ex, HttpServletRequest request
+    ) {
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.CONFLICT.value())
+                .error(HttpStatus.CONFLICT.getReasonPhrase())
+                .message(ex.getMessage())
                 .path(request.getRequestURI())
                 .build();
         return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex, HttpServletRequest request) {
+        log.error("Data integrity violation on path [{}]: {}", request.getRequestURI(), ex.getMessage(), ex);
+        boolean activeShowSeatConflict = containsConstraint(ex, "uk_booking_seats_active_show_seat");
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.CONFLICT.value())
+                .error(HttpStatus.CONFLICT.getReasonPhrase())
+                .message(activeShowSeatConflict
+                        ? "This seat was just taken for the selected show. Please choose another seat."
+                        : "The request conflicts with existing data. Please refresh and try again.")
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
+    }
+
+    private boolean containsConstraint(DataIntegrityViolationException ex, String constraintName) {
+        Throwable current = ex;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase().contains(constraintName.toLowerCase())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @ExceptionHandler({BadCredentialsException.class, UsernameNotFoundException.class})
@@ -185,6 +234,32 @@ public class GlobalExceptionHandler {
                 .path(request.getRequestURI())
                 .build();
         return new ResponseEntity<>(errorResponse, HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        log.warn("Upload too large on path [{}]: {}", request.getRequestURI(), ex.getMessage());
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.PAYLOAD_TOO_LARGE.value())
+                .error(HttpStatus.PAYLOAD_TOO_LARGE.getReasonPhrase())
+                .message("Image file is too large. Please upload an image up to 10MB.")
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.PAYLOAD_TOO_LARGE);
+    }
+
+    @ExceptionHandler(ExternalStorageException.class)
+    public ResponseEntity<ErrorResponse> handleExternalStorageException(ExternalStorageException ex, HttpServletRequest request) {
+        log.error("External storage error on path [{}]: {}", request.getRequestURI(), ex.getMessage(), ex);
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.BAD_GATEWAY.value())
+                .error(HttpStatus.BAD_GATEWAY.getReasonPhrase())
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_GATEWAY);
     }
 
     @ExceptionHandler(Exception.class)
