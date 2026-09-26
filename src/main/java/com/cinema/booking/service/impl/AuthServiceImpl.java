@@ -41,6 +41,8 @@ public class AuthServiceImpl implements AuthService {
     private final UserDetailsService userDetailsService;
     private final AuthorizationService authorizationService;
     private final UserMapper userMapper;
+    private final com.cinema.booking.service.GoogleAuthService googleAuthService;
+    private final com.cinema.booking.service.OtpService otpService;
 
     @Override
     @Transactional
@@ -133,6 +135,75 @@ public class AuthServiceImpl implements AuthService {
         return LogoutResponseDto.builder()
                 .message("Logout successful")
                 .build();
+    }
+
+    @Override
+    @Transactional
+    public AuthResponseDto loginWithGoogle(com.cinema.booking.dto.auth.GoogleAuthRequestDto dto) {
+        com.cinema.booking.service.GoogleAuthService.GoogleUserInfo info = googleAuthService.verifyToken(dto);
+        String email = info.email().trim().toLowerCase();
+
+        User user = userRepository.findByEmail(email).orElseGet(() -> {
+            User newUser = new User();
+            String baseUsername = email.split("@")[0].replaceAll("[^a-zA-Z0-9_]", "");
+            if (baseUsername.isBlank()) baseUsername = "user";
+            String candidateUsername = baseUsername;
+            int suffix = 1;
+            while (userRepository.existsByUsername(candidateUsername)) {
+                candidateUsername = baseUsername + suffix++;
+            }
+            newUser.setUsername(candidateUsername);
+            newUser.setEmail(email);
+            newUser.setName(info.name() != null && !info.name().isBlank() ? info.name() : candidateUsername);
+            newUser.setPassword(passwordEncoder.encode(java.util.UUID.randomUUID().toString()));
+            newUser.setRole(Role.USER);
+            newUser.setStatus("ACTIVE");
+            return userRepository.save(newUser);
+        });
+
+        if (user.getStatus() != null && !"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+            throw new DisabledException("Account is disabled or inactive");
+        }
+
+        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername() != null ? user.getUsername() : user.getEmail());
+        return buildAuthResponse(userDetails, user, authTokenService.createRefreshToken(user));
+    }
+
+    @Override
+    public com.cinema.booking.dto.auth.OtpResponseDto sendOtp(com.cinema.booking.dto.auth.OtpSendRequestDto dto) {
+        return otpService.sendOtp(dto);
+    }
+
+    @Override
+    @Transactional
+    public AuthResponseDto verifyOtp(com.cinema.booking.dto.auth.OtpVerifyRequestDto dto) {
+        otpService.verifyOtp(dto);
+        String email = dto.getEmail().trim().toLowerCase();
+
+        User user = userRepository.findByEmail(email).orElseGet(() -> {
+            User newUser = new User();
+            String baseUsername = email.split("@")[0].replaceAll("[^a-zA-Z0-9_]", "");
+            if (baseUsername.isBlank()) baseUsername = "user";
+            String candidateUsername = baseUsername;
+            int suffix = 1;
+            while (userRepository.existsByUsername(candidateUsername)) {
+                candidateUsername = baseUsername + suffix++;
+            }
+            newUser.setUsername(candidateUsername);
+            newUser.setEmail(email);
+            newUser.setName(candidateUsername);
+            newUser.setPassword(passwordEncoder.encode(java.util.UUID.randomUUID().toString()));
+            newUser.setRole(Role.USER);
+            newUser.setStatus("ACTIVE");
+            return userRepository.save(newUser);
+        });
+
+        if (user.getStatus() != null && !"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+            throw new DisabledException("Account is disabled or inactive");
+        }
+
+        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername() != null ? user.getUsername() : user.getEmail());
+        return buildAuthResponse(userDetails, user, authTokenService.createRefreshToken(user));
     }
 
     private AuthResponseDto buildAuthResponse(UserDetails userDetails, User user, String refreshToken) {

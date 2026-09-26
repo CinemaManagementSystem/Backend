@@ -57,4 +57,19 @@ public class AuthController {
         return ResponseEntity.ok(authService.logout(authorizationHeader, dto));
     }
 
+    @PostMapping("/google")
+    public ResponseEntity<AuthResponseDto> googleLogin(@Valid @RequestBody com.cinema.booking.dto.auth.GoogleAuthRequestDto dto) {
+        return ResponseEntity.ok(authService.loginWithGoogle(dto));
+    }
+
+    @PostMapping("/otp/send")
+    public ResponseEntity<com.cinema.booking.dto.auth.OtpResponseDto> sendOtp(@Valid @RequestBody com.cinema.booking.dto.auth.OtpSendRequestDto dto) {
+        return ResponseEntity.ok(authService.sendOtp(dto));
+    }
+
+    @PostMapping("/otp/verify")
+    public ResponseEntity<AuthResponseDto> verifyOtp(@Valid @RequestBody com.cinema.booking.dto.auth.OtpVerifyRequestDto dto) {
+        return ResponseEntity.ok(authService.verifyOtp(dto));
+    }
+
 }

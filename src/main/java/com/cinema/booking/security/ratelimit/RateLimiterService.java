@@ -40,6 +40,9 @@ public class RateLimiterService {
             policy("auth-register", "POST", "/api/auth/register", 3, KeyStrategy.IP, "anonymous"),
             policy("auth-refresh", "POST", "/api/auth/refresh", 10, KeyStrategy.IP_AND_REFRESH_TOKEN, "anonymous"),
             policy("auth-logout", "POST", "/api/auth/logout", 20, KeyStrategy.USER_OR_IP, "authenticated user"),
+            policy("auth-google", "POST", "/api/auth/google", 10, KeyStrategy.IP, "anonymous"),
+            policy("auth-otp-send", "POST", "/api/auth/otp/send", 5, KeyStrategy.IP, "anonymous"),
+            policy("auth-otp-verify", "POST", "/api/auth/otp/verify", 10, KeyStrategy.IP, "anonymous"),
 
             policy("payment-create", "POST", "/api/payments", 5, KeyStrategy.USER_OR_IP, "USER"),
             policy("payment-cash-switch", "POST", "/api/payments/*/switch-to-cash", 5, KeyStrategy.USER_OR_IP, "USER"),

@@ -20,4 +20,10 @@ public interface AuthService {
     UserResponseDto getCurrentUser();
 
     LogoutResponseDto logout(String authorizationHeader, LogoutRequestDto dto);
+
+    AuthResponseDto loginWithGoogle(com.cinema.booking.dto.auth.GoogleAuthRequestDto dto);
+
+    com.cinema.booking.dto.auth.OtpResponseDto sendOtp(com.cinema.booking.dto.auth.OtpSendRequestDto dto);
+
+    AuthResponseDto verifyOtp(com.cinema.booking.dto.auth.OtpVerifyRequestDto dto);
 }
