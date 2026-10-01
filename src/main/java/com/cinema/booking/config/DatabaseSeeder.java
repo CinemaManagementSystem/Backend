@@ -195,9 +195,9 @@ public class DatabaseSeeder implements CommandLineRunner {
 
         // 9. Showtimes (linked to Movie & Screen)
         LocalDate showDate = LocalDate.now().plusDays(1);
-        seedShowIfNotExists("Inception", screen1, showDate.atTime(LocalTime.of(18, 0)), BigDecimal.valueOf(6.00));
-        seedShowIfNotExists("Interstellar", screen2, showDate.atTime(LocalTime.of(19, 0)), BigDecimal.valueOf(9.00));
-        seedShowIfNotExists("Avengers: Endgame", screen3, showDate.atTime(LocalTime.of(20, 0)), BigDecimal.valueOf(6.00));
+        seedShowIfNotExists("Inception", screen1, showDate.atTime(LocalTime.of(18, 0)), BigDecimal.valueOf(0.10));
+        seedShowIfNotExists("Interstellar", screen2, showDate.atTime(LocalTime.of(19, 0)), BigDecimal.valueOf(0.20));
+        seedShowIfNotExists("Avengers: Endgame", screen3, showDate.atTime(LocalTime.of(20, 0)), BigDecimal.valueOf(0.30));
 
         // 10. Product Categories
         ProductCategory popcornCat = seedProductCategoryIfNotExists("Popcorn", "Freshly popped gourmet popcorn in sweet, salted, or cheese flavors", true);
@@ -303,8 +303,14 @@ public class DatabaseSeeder implements CommandLineRunner {
         for (int r = 0; r < totalRows; r++) {
             String rowName = String.valueOf((char) (startRow + r));
             String seatType = (r == totalRows - 1) ? "COUPLE" : (r >= totalRows - 2 ? "VIP" : "STANDARD");
-            BigDecimal price = (seatType.equals("COUPLE")) ? BigDecimal.valueOf(14.00)
-                    : (seatType.equals("VIP") ? BigDecimal.valueOf(9.00) : BigDecimal.valueOf(6.00));
+            BigDecimal basePrice = (screen != null && screen.getId() != null)
+                    ? (screen.getId() == 1L ? BigDecimal.valueOf(0.10)
+                    : screen.getId() == 2L ? BigDecimal.valueOf(0.20)
+                    : screen.getId() == 3L ? BigDecimal.valueOf(0.30)
+                    : BigDecimal.valueOf(0.20))
+                    : BigDecimal.valueOf(0.20);
+            BigDecimal price = (seatType.equals("COUPLE")) ? basePrice.add(BigDecimal.valueOf(0.20))
+                    : (seatType.equals("VIP") ? basePrice.add(BigDecimal.valueOf(0.10)) : basePrice);
 
             for (int s = 1; s <= seatsPerRow; s++) {
                 String seatNumber = rowName + s;
