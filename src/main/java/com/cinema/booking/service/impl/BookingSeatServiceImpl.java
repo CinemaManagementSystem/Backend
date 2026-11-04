@@ -18,6 +18,7 @@ import com.cinema.booking.service.BookingService;
 import com.cinema.booking.service.MembershipPricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -41,7 +42,7 @@ public class BookingSeatServiceImpl implements BookingSeatService {
     private final MembershipPricingService membershipPricingService;
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public BookingSeatResponseDto create(BookingSeatRequestDto dto) {
         Booking booking = bookingRepository.findByIdForUpdate(dto.getBookingId())
                 .orElseThrow(() -> new ResourceNotFoundException("Booking", dto.getBookingId()));
@@ -70,7 +71,7 @@ public class BookingSeatServiceImpl implements BookingSeatService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public BookingSeatResponseDto update(Long id, BookingSeatRequestDto dto) {
         BookingSeat existing = bookingSeatRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("BookingSeat", id));

@@ -9,6 +9,7 @@ import com.cinema.booking.enums.MembershipStatus;
 import com.cinema.booking.repository.MembershipBenefitRepository;
 import com.cinema.booking.repository.MembershipUsageRepository;
 import com.cinema.booking.repository.UserMembershipRepository;
+import com.cinema.booking.service.impl.MembershipPricingServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -33,7 +34,7 @@ class MembershipPricingServiceTest {
 
     @Test
     void ticketDiscountIsCalculatedFromActiveMembershipBenefit() {
-        MembershipPricingService service = new MembershipPricingService(
+        MembershipPricingService service = new MembershipPricingServiceImpl(
                 userMembershipRepository,
                 membershipBenefitRepository,
                 membershipUsageRepository
